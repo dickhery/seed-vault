@@ -1,0 +1,26 @@
+{
+  "canisters": {
+    "seed-vault-backend": {
+      "main": "src/seed-vault-backend/main.mo",
+      "type": "motoko"
+    },
+    "seed-vault-frontend": {
+      "dependencies": [
+        "seed-vault-backend"
+      ],
+      "source": [
+        "src/seed-vault-frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "seed-vault-frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
