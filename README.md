@@ -52,11 +52,11 @@ Which will start a server at `http://localhost:8080`, proxying API requests to t
 ### vetKD local setup
 
 The sample app expects the vetKD system API canister when running locally. The `dfx.json` configuration now points to the
-official SDK release artifact, so `dfx deploy vetkd_system_api` will download the WASM automatically. If you prefer to pin the
-artifact locally (for offline builds), download it manually:
+SDK's canonical WASM in the repository, so `dfx deploy vetkd_system_api` will download the file automatically. If you prefer
+to pin the artifact locally (for offline builds or to avoid GitHub access during deployment), download it manually:
 
 ```bash
-curl -L https://github.com/dfinity/sdk/releases/latest/download/vetkd_system_api.wasm -o vetkd_system_api.wasm
+curl -L https://raw.githubusercontent.com/dfinity/sdk/master/src/canisters/vetkd_system_api/vetkd_system_api.wasm -o vetkd_system_api.wasm
 ```
 
 Place the downloaded file in the project root to override the remote download.
