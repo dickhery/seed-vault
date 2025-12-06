@@ -16,10 +16,12 @@ type EncryptedKeyReply = { encrypted_key : Blob };
 type PublicKeyReply = { public_key : Blob };
 
 // Call the management canister directly for vetKD (works locally with the dfx test key).
-let IC = actor "aaaaa-aa" {
+type VetKdApi = actor {
   vetkd_public_key : VetKdPublicKeyArgs -> async PublicKeyReply;
   vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
 };
+
+let IC : VetKdApi = actor "aaaaa-aa";
 
 actor {
   let DOMAIN_SEPARATOR = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
