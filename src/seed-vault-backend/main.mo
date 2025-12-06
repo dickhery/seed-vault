@@ -7,9 +7,8 @@ import Option "mo:base/Option";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
-import ExperimentalCycles "mo:base/ExperimentalCycles";
 
-actor {
+actor persistent {
   // Type definitions for vetKD interactions must live inside the actor to satisfy Motoko's actor file rules.
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -23,9 +22,10 @@ actor {
     vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
   };
 
-  transient let IC : VetKdApi = actor "aaaaa-aa";
+  let IC : VetKdApi = actor "aaaaa-aa";
 
-  transient let DOMAIN_SEPARATOR : Blob = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
+  // Keep domain separator as raw bytes for easier array appends when building vetKD context inputs.
+  let DOMAIN_SEPARATOR : [Nat8] = Text.encodeUtf8("seed-vault-app");
   stable var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
 
   transient let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
@@ -37,7 +37,7 @@ actor {
 
   private func context(principal : Principal) : Blob {
     let principalBytes = Blob.toArray(Principal.toBlob(principal));
-    let dom = Blob.toArray(DOMAIN_SEPARATOR);
+    let dom = DOMAIN_SEPARATOR;
     let size = Nat8.fromNat(principalBytes.size());
     let sizeArr : [Nat8] = [size];
     let withDomain = Array.append(sizeArr, dom);
@@ -56,8 +56,7 @@ actor {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input = Blob.fromArray(Text.encodeUtf8(name));
-    ExperimentalCycles.add<system>(10_000_000_000);
-    let { encrypted_key } = await IC.vetkd_derive_key({
+    let { encrypted_key } = await (with cycles = 10_000_000_000) IC.vetkd_derive_key({
       input;
       context = context(caller);
       key_id = keyId();
