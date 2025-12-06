@@ -19,11 +19,7 @@
       "type": "custom",
       "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
     },
-    "vetkd_system_api": {
-      "candid": "vetkd_system_api.did",
-      "type": "custom",
-      "wasm": "vetkd_system_api.wasm"
-    }
+    
   },
   "defaults": {
     "build": {

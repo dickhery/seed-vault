@@ -51,15 +51,7 @@ Which will start a server at `http://localhost:8080`, proxying API requests to t
 
 ### vetKD local setup
 
-The sample app expects the vetKD system API canister when running locally. A known-good WASM from the encrypted-notes tutorial is already vendored in this repository as `vetkd_system_api.wasm`, and `dfx.json` is configured to use that local file. If you need to refresh it, you can re-download from the official example source:
-
-```bash
-curl -L https://github.com/dfinity/examples/raw/master/motoko/encrypted-notes-dapp-vetkd/vetkd_system_api.wasm -o vetkd_system_api.wasm
-```
-
-Keep the file in the project root so `dfx deploy vetkd_system_api` uses it without hitting the network.
-
-The backend uses the vetKD `test_key_1` identifier, which works on local replicas and test subnets. Switch to `key_1` (and attach cycles per the vetKD docs) for production deployments.
+The backend now calls the management canister (`aaaaa-aa`) directly for vetKD using the `dfx_test_key` that ships with the local replica. No extra canister or WASM download is required. For IC deployments, switch the key name in `src/seed-vault-backend/main.mo` to `test_key_1` or `key_1` and attach the recommended cycles for vetKD calls.
 
 ### Note on frontend environment variables
 

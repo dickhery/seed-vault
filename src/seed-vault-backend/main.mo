@@ -15,8 +15,8 @@ type VetKdDeriveKeyArgs = { input : Blob; context : Blob; key_id : VetKdKeyId; t
 type EncryptedKeyReply = { encrypted_key : Blob };
 type PublicKeyReply = { public_key : Blob };
 
-// vetkd_system_api management shim (local replica actor id).
-let IC = actor "s55qq-oqaaa-aaaaa-aaakq-cai" {
+// Call the management canister directly for vetKD (works locally with the dfx test key).
+let IC = actor "aaaaa-aa" {
   vetkd_public_key : VetKdPublicKeyArgs -> async PublicKeyReply;
   vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
 };
@@ -28,8 +28,8 @@ actor {
   let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
-    // "test_key_1" works on local replicas and public subnets that expose the vetKD test key.
-    { curve = #bls12_381_g2; name = "test_key_1" };
+    // "dfx_test_key" is available on the local replica; switch to "test_key_1" or "key_1" for IC deployments.
+    { curve = #bls12_381_g2; name = "dfx_test_key" };
   };
 
   private func context(principal : Principal) : Blob {
