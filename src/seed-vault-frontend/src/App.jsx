@@ -3,7 +3,10 @@ import { AuthClient } from '@dfinity/auth-client';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { TransportSecretKey, EncryptedVetKey, DerivedPublicKey } from '@dfinity/vetkeys';
 
-const LOCAL_II_URL = `http://127.0.0.1:8000/?canisterId=${process.env.CANISTER_ID_INTERNET_IDENTITY}`;
+const II_URL =
+  process.env.DFX_NETWORK === 'ic'
+    ? 'https://identity.ic0.app'
+    : `http://127.0.0.1:4943/?canisterId=${process.env.CANISTER_ID_INTERNET_IDENTITY}`;
 
 function App() {
   const [identity, setIdentity] = useState(null);
@@ -28,7 +31,7 @@ function App() {
   async function login() {
     const authClient = await AuthClient.create();
     await authClient.login({
-      identityProvider: LOCAL_II_URL,
+      identityProvider: II_URL,
       onSuccess: async () => {
         const loggedInIdentity = authClient.getIdentity();
         setIdentity(loggedInIdentity);

@@ -22,12 +22,12 @@ actor {
     vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
   };
 
-  let transient IC : VetKdApi = actor "aaaaa-aa";
+  let IC : VetKdApi = actor "aaaaa-aa";
 
-  let transient DOMAIN_SEPARATOR : Blob = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
+  let DOMAIN_SEPARATOR : Blob = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
   stable var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
 
-  let transient seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
+  let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
     // Use the mainnet test key so deployments to the IC succeed. Switch to "key_1" for production traffic.
