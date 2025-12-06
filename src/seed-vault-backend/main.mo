@@ -7,6 +7,7 @@ import Option "mo:base/Option";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import ExperimentalCycles "mo:base/ExperimentalCycles";
 
 actor {
   // Type definitions for vetKD interactions must live inside the actor to satisfy Motoko's actor file rules.
@@ -22,12 +23,12 @@ actor {
     vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
   };
 
-  let IC : VetKdApi = actor "aaaaa-aa";
+  transient let IC : VetKdApi = actor "aaaaa-aa";
 
-  let DOMAIN_SEPARATOR : Blob = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
+  transient let DOMAIN_SEPARATOR : Blob = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
   stable var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
 
-  let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
+  transient let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
     // Use the mainnet test key so deployments to the IC succeed. Switch to "key_1" for production traffic.
@@ -38,7 +39,9 @@ actor {
     let principalBytes = Blob.toArray(Principal.toBlob(principal));
     let dom = Blob.toArray(DOMAIN_SEPARATOR);
     let size = Nat8.fromNat(principalBytes.size());
-    let flattened = Array.flatten([[size], dom, principalBytes]);
+    let sizeArr : [Nat8] = [size];
+    let withDomain = Array.append(sizeArr, dom);
+    let flattened = Array.append(withDomain, principalBytes);
     Blob.fromArray(flattened);
   };
 
@@ -53,7 +56,8 @@ actor {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input = Blob.fromArray(Text.encodeUtf8(name));
-    let { encrypted_key } = await (with cycles = 10_000_000_000) IC.vetkd_derive_key({
+    ExperimentalCycles.add<system>(10_000_000_000);
+    let { encrypted_key } = await IC.vetkd_derive_key({
       input;
       context = context(caller);
       key_id = keyId();
