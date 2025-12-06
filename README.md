@@ -51,15 +51,15 @@ Which will start a server at `http://localhost:8080`, proxying API requests to t
 
 ### vetKD local setup
 
-The sample app expects the vetKD system API canister when running locally. The `dfx.json` configuration now points to the
-SDK's canonical WASM in the repository, so `dfx deploy vetkd_system_api` will download the file automatically. If you prefer
-to pin the artifact locally (for offline builds or to avoid GitHub access during deployment), download it manually:
+The sample app expects the vetKD system API canister when running locally. A known-good WASM from the encrypted-notes tutorial is already vendored in this repository as `vetkd_system_api.wasm`, and `dfx.json` is configured to use that local file. If you need to refresh it, you can re-download from the official example source:
 
 ```bash
-curl -L https://raw.githubusercontent.com/dfinity/sdk/master/src/canisters/vetkd_system_api/vetkd_system_api.wasm -o vetkd_system_api.wasm
+curl -L https://github.com/dfinity/examples/raw/master/motoko/encrypted-notes-dapp-vetkd/vetkd_system_api.wasm -o vetkd_system_api.wasm
 ```
 
-Place the downloaded file in the project root to override the remote download.
+Keep the file in the project root so `dfx deploy vetkd_system_api` uses it without hitting the network.
+
+The backend uses the vetKD `test_key_1` identifier, which works on local replicas and test subnets. Switch to `key_1` (and attach cycles per the vetKD docs) for production deployments.
 
 ### Note on frontend environment variables
 

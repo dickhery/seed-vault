@@ -28,7 +28,8 @@ actor {
   let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
-    { curve = #bls12_381_g2; name = "dfx_test_key" };
+    // "test_key_1" works on local replicas and public subnets that expose the vetKD test key.
+    { curve = #bls12_381_g2; name = "test_key_1" };
   };
 
   private func context(principal : Principal) : Blob {
@@ -58,6 +59,12 @@ actor {
   };
 
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
+    if (Text.size(name) == 0) {
+      return #err("Name cannot be empty");
+    };
+    if (Blob.size(cipher) == 0) {
+      return #err("Ciphertext cannot be empty");
+    };
     let userSeeds = Option.get(seedsByOwner.get(caller), Map.TrieMap<Text, { cipher : Blob; iv : Blob }>(Text.equal, Text.hash));
     switch (userSeeds.get(name)) {
       case (?_) { return #err("Name already exists for this user"); };
