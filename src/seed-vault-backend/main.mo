@@ -22,12 +22,12 @@ actor {
     vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
   };
 
-  let IC : VetKdApi = actor "aaaaa-aa";
+  let transient IC : VetKdApi = actor "aaaaa-aa";
 
-  let DOMAIN_SEPARATOR = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
-  stable var stableSeeds : [(Principal, [(Text, (Blob, Blob))])] = [];
+  let transient DOMAIN_SEPARATOR : Blob = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
+  stable var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
 
-  let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
+  let transient seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
     // Use the mainnet test key so deployments to the IC succeed. Switch to "key_1" for production traffic.
@@ -36,8 +36,10 @@ actor {
 
   private func context(principal : Principal) : Blob {
     let principalBytes = Blob.toArray(Principal.toBlob(principal));
+    let dom = Blob.toArray(DOMAIN_SEPARATOR);
     let size = Nat8.fromNat(principalBytes.size());
-    Blob.fromArray(Array.append(Array.append([size], Blob.toArray(DOMAIN_SEPARATOR)), principalBytes));
+    let flattened = Array.flatten([[size], dom, principalBytes]);
+    Blob.fromArray(flattened);
   };
 
   public shared ({ caller }) func public_key() : async Blob {
@@ -64,7 +66,7 @@ actor {
     if (Text.size(name) == 0) {
       return #err("Name cannot be empty");
     };
-    if (Blob.size(cipher) == 0) {
+    if (Blob.toArray(cipher).size() == 0) {
       return #err("Ciphertext cannot be empty");
     };
     let userSeeds = Option.get(seedsByOwner.get(caller), Map.TrieMap<Text, { cipher : Blob; iv : Blob }>(Text.equal, Text.hash));
@@ -81,7 +83,7 @@ actor {
     switch (seedsByOwner.get(caller)) {
       case (null) { [] };
       case (?userSeeds) {
-        Iter.toArray(Iter.map(userSeeds.entries(), func((n, e) : (Text, { cipher : Blob; iv : Blob })) : (Text, Blob, Blob) {
+        Iter.toArray<(Text, Blob, Blob)>(Iter.map<(Text, { cipher : Blob; iv : Blob }), (Text, Blob, Blob)>(userSeeds.entries(), func((n, e)) {
           (n, e.cipher, e.iv)
         }));
       };
@@ -89,9 +91,12 @@ actor {
   };
 
   system func preupgrade() {
-    stableSeeds := Iter.toArray(Iter.map(seedsByOwner.entries(), func((p, m)) {
-      (p, Iter.toArray(m.entries()))
-    }));
+    stableSeeds := Iter.toArray<(Principal, [(Text, { cipher : Blob; iv : Blob })])>(Iter.map<(Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>), (Principal, [(Text, { cipher : Blob; iv : Blob })])>(
+      seedsByOwner.entries(),
+      func((p, m)) {
+        (p, Iter.toArray(m.entries()))
+      }
+    ));
   };
 
   system func postupgrade() {
