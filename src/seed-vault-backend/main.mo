@@ -8,30 +8,30 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-// Type definitions for vetKD interactions.
-type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
-type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
-type VetKdDeriveKeyArgs = { input : Blob; context : Blob; key_id : VetKdKeyId; transport_public_key : Blob };
-type EncryptedKeyReply = { encrypted_key : Blob };
-type PublicKeyReply = { public_key : Blob };
-
-// Call the management canister directly for vetKD (works locally with the dfx test key).
-type VetKdApi = actor {
-  vetkd_public_key : VetKdPublicKeyArgs -> async PublicKeyReply;
-  vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
-};
-
-let IC : VetKdApi = actor "aaaaa-aa";
-
 actor {
+  // Type definitions for vetKD interactions must live inside the actor to satisfy Motoko's actor file rules.
+  type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
+  type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
+  type VetKdDeriveKeyArgs = { input : Blob; context : Blob; key_id : VetKdKeyId; transport_public_key : Blob };
+  type EncryptedKeyReply = { encrypted_key : Blob };
+  type PublicKeyReply = { public_key : Blob };
+
+  // Call the management canister directly for vetKD.
+  type VetKdApi = actor {
+    vetkd_public_key : VetKdPublicKeyArgs -> async PublicKeyReply;
+    vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
+  };
+
+  let IC : VetKdApi = actor "aaaaa-aa";
+
   let DOMAIN_SEPARATOR = Blob.fromArray(Text.encodeUtf8("seed-vault-app"));
   stable var stableSeeds : [(Principal, [(Text, (Blob, Blob))])] = [];
 
   let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
-    // "dfx_test_key" is available on the local replica; switch to "test_key_1" or "key_1" for IC deployments.
-    { curve = #bls12_381_g2; name = "dfx_test_key" };
+    // Use the mainnet test key so deployments to the IC succeed. Switch to "key_1" for production traffic.
+    { curve = #bls12_381_g2; name = "test_key_1" };
   };
 
   private func context(principal : Principal) : Blob {
@@ -51,7 +51,7 @@ actor {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input = Blob.fromArray(Text.encodeUtf8(name));
-    let { encrypted_key } = await IC.vetkd_derive_key({
+    let { encrypted_key } = await (with cycles = 10_000_000_000) IC.vetkd_derive_key({
       input;
       context = context(caller);
       key_id = keyId();
