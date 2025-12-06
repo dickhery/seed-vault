@@ -49,6 +49,17 @@ npm start
 
 Which will start a server at `http://localhost:8080`, proxying API requests to the replica at port 4943.
 
+### vetKD local setup
+
+The sample app expects the vetKD system API canister when running locally. Download the WASM from the SDK releases before
+deploying:
+
+```bash
+curl -L https://github.com/dfinity/sdk/releases/latest/download/vetkd_system_api.wasm -o vetkd_system_api.wasm
+```
+
+Place the downloaded file in the project root so `dfx deploy vetkd_system_api` can locate it.
+
 ### Note on frontend environment variables
 
 If you are hosting frontend code somewhere without using DFX, you may need to make one of the following adjustments to ensure your project does not fetch the root key in production:

@@ -1,0 +1,11 @@
+// vetKD system API interface used for local development.
+type vetkd_key_id = record { curve : variant { bls12_381_g2 }; name : text };
+type vetkd_public_key_args = record { canister_id : opt principal; context : blob; key_id : vetkd_key_id };
+type vetkd_public_key_reply = record { public_key : blob };
+type vetkd_derive_key_args = record { input : blob; context : blob; key_id : vetkd_key_id; transport_public_key : blob };
+type vetkd_encrypted_key_reply = record { encrypted_key : blob };
+
+service : {
+  vetkd_public_key : (vetkd_public_key_args) -> (vetkd_public_key_reply) query;
+  vetkd_derive_key : (vetkd_derive_key_args) -> (vetkd_encrypted_key_reply);
+}
