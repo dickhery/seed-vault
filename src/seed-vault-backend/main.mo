@@ -8,7 +8,7 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-actor persistent {
+actor {
   // Type definitions for vetKD interactions must live inside the actor to satisfy Motoko's actor file rules.
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -31,8 +31,8 @@ actor persistent {
   transient let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
   private func keyId() : VetKdKeyId {
-    // Use the mainnet test key so deployments to the IC succeed. Switch to "key_1" for production traffic.
-    { curve = #bls12_381_g2; name = "test_key_1" };
+    // Use the dfx local test key; switch to "test_key_1" or "key_1" for IC deployments.
+    { curve = #bls12_381_g2; name = "dfx_test_key" };
   };
 
   private func context(principal : Principal) : Blob {
