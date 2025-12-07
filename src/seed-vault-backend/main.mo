@@ -8,7 +8,7 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-actor {
+persistent actor {
   // Type definitions for vetKD interactions must live inside the actor to satisfy Motoko's actor file rules.
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -22,11 +22,11 @@ actor {
     vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
   };
 
-  let IC : VetKdApi = actor "aaaaa-aa";
+  transient let IC : VetKdApi = actor "aaaaa-aa";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
-  let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
-  stable var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
+  transient let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
+  var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
 
   transient let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
 
