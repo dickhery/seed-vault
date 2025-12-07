@@ -21,13 +21,19 @@ dfx canister --help
 
 ## Running the project locally
 
+> **Canister reuse note**: `dfx` keeps canister IDs in `canister_ids.json`. As long as you keep this file and deploy with the same network flag, `dfx deploy` will update the existing backend/frontend canisters instead of creating new ones. Internet Identity is **not** part of this project's `dfx.json`; use the official mainnet II in production, and deploy a local II only when you need it for local testing (instructions below).
+
 If you want to test your project locally, you can use the following commands:
 
 ```bash
 # Starts the replica, running in the background
-dfx start --background
+dfx start --clean --background
 
-# Deploys your canisters to the replica and generates your candid interface
+# (Optional) deploy a local Internet Identity for dev auth
+dfx deploy internet_identity --argument '(null)'
+export CANISTER_ID_INTERNET_IDENTITY=$(dfx canister id internet_identity)
+
+# Deploy only the project canisters (backend + frontend)
 dfx deploy
 ```
 
@@ -51,7 +57,12 @@ Which will start a server at `http://localhost:8080`, proxying API requests to t
 
 ### vetKD local setup
 
-The backend now calls the management canister (`aaaaa-aa`) directly for vetKD using the `dfx_test_key` that ships with the local replica. No extra canister or WASM download is required. For IC deployments, switch the key name in `src/seed-vault-backend/main.mo` to `test_key_1` or `key_1` and attach the recommended cycles for vetKD calls.
+The backend calls the management canister (`aaaaa-aa`) directly for vetKD. No separate `vetkd_system_api` canister is needed. Use the local `dfx_test_key` when developing locally; for IC deployments switch the key name in `src/seed-vault-backend/main.mo` to `test_key_1` or `key_1` and attach the recommended cycles for vetKD calls.
+
+### Internet Identity usage
+
+- **IC / production**: The frontend already points to the official II at `https://identity.ic0.app` when `DFX_NETWORK=ic`. No II canister is deployed by this project on mainnet.
+- **Local**: Deploy a local II manually (see commands above) and set `CANISTER_ID_INTERNET_IDENTITY` in your shell so the frontend can build the correct login URL. Because II is no longer listed in `dfx.json`, running `dfx deploy` will not create additional II canisters or consume cycles unexpectedly.
 
 ### Note on frontend environment variables
 
