@@ -24,8 +24,8 @@ actor {
 
   let IC : VetKdApi = actor "aaaaa-aa";
 
-  // Keep domain separator as raw bytes for easier array appends when building vetKD context inputs.
-  let DOMAIN_SEPARATOR : [Nat8] = Text.encodeUtf8("seed-vault-app");
+  // Keep domain separator as a blob and convert to bytes when building the vetKD context.
+  let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
   stable var stableSeeds : [(Principal, [(Text, { cipher : Blob; iv : Blob })])] = [];
 
   transient let seedsByOwner = Map.TrieMap<Principal, Map.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
@@ -36,12 +36,12 @@ actor {
   };
 
   private func context(principal : Principal) : Blob {
-    let principalBytes = Blob.toArray(Principal.toBlob(principal));
-    let dom = DOMAIN_SEPARATOR;
+    let principalBytes : [Nat8] = Blob.toArray(Principal.toBlob(principal));
+    let dom : [Nat8] = Blob.toArray(DOMAIN_SEPARATOR);
     let size = Nat8.fromNat(principalBytes.size());
     let sizeArr : [Nat8] = [size];
-    let withDomain = Array.append(sizeArr, dom);
-    let flattened = Array.append(withDomain, principalBytes);
+    let withDomain : [Nat8] = Array.append(sizeArr, dom);
+    let flattened : [Nat8] = Array.append(withDomain, principalBytes);
     Blob.fromArray(flattened);
   };
 
@@ -55,7 +55,7 @@ actor {
   };
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
-    let input = Blob.fromArray(Text.encodeUtf8(name));
+    let input : Blob = Text.encodeUtf8(name);
     let { encrypted_key } = await (with cycles = 10_000_000_000) IC.vetkd_derive_key({
       input;
       context = context(caller);
