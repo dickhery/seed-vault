@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
-import { TransportSecretKey, EncryptedVetKey } from '@dfinity/vetkeys';
+import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
 const II_URL = 'https://identity.ic0.app';
 
@@ -56,9 +56,12 @@ function App() {
       throw new Error(`vetKD derivation failed: ${error.message}`);
     }
     const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
+    const derivedPublicKeyBytes = await backendActor.public_key();
+    const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
+    const input = new TextEncoder().encode(seedName);
     let vetKey;
     try {
-      vetKey = encryptedVetKey.decrypt(transportSecretKey);
+      vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
     } catch (error) {
       throw new Error(`vetKD decryption failed: ${error.message}`);
     }
