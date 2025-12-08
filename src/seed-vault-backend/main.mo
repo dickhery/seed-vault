@@ -30,35 +30,31 @@ actor {
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
     var i : Nat = 0;
-    label l : ?Nat loop {
-      if (i >= seedsByOwner.size()) {
-        break l null;
-      };
+    while (i < seedsByOwner.size()) {
       let (p, _) = seedsByOwner[i];
       if (Principal.equal(p, owner)) {
-        break l ?i;
+        return ?i;
       };
       i += 1;
-    }
+    };
+    null;
   };
 
   private func hasSeedName(seeds : [(Text, Blob, Blob)], name : Text) : Bool {
     var i : Nat = 0;
-    label l : Bool loop {
-      if (i >= seeds.size()) {
-        break l false;
-      };
+    while (i < seeds.size()) {
       let (n, _, _) = seeds[i];
       if (Text.equal(n, name)) {
-        break l true;
+        return true;
       };
       i += 1;
-    }
+    };
+    false;
   };
 
   private func keyId() : VetKdKeyId {
-    // Use "test_key_1" for mainnet testing; switch to "key_1" for production.
-    { curve = #bls12_381_g2; name = "test_key_1" };
+    // Use the production key on mainnet; switch to "test_key_1" if you want cheaper testing.
+    { curve = #bls12_381_g2; name = "key_1" };
   };
 
   private func context(principal : Principal) : Blob {
@@ -82,7 +78,7 @@ actor {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input : Blob = Text.encodeUtf8(name);
-    ExperimentalCycles.add<system>(10_000_000_000);
+    ExperimentalCycles.add<system>(26_153_846_153);
     let { encrypted_key } = await IC.vetkd_derive_key({
       input;
       context = context(caller);
