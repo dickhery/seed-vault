@@ -65,7 +65,18 @@ function App() {
     } catch (error) {
       throw new Error(`vetKD decryption failed: ${error.message}`);
     }
-    const hashed = await crypto.subtle.digest('SHA-256', vetKey);
+
+    // Ensure the value passed to WebCrypto is an ArrayBufferView/ArrayBuffer.
+    const vetKeyBytes =
+      vetKey instanceof Uint8Array
+        ? vetKey
+        : vetKey instanceof ArrayBuffer
+          ? new Uint8Array(vetKey)
+          : ArrayBuffer.isView(vetKey)
+            ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
+            : new Uint8Array(vetKey);
+
+    const hashed = await crypto.subtle.digest('SHA-256', vetKeyBytes);
     return new Uint8Array(hashed);
   }
 
