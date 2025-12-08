@@ -76,15 +76,19 @@ function App() {
   }
 
   async function loadSeeds() {
-    const mySeeds = await backendActor.get_my_seeds();
-    const decrypted = await Promise.all(
-      mySeeds.map(async ([seedName, cipher, iv]) => {
-        const key = await deriveSymmetricKey(seedName);
-        const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
-        return { name: seedName, phrase: phraseText };
-      }),
-    );
-    setSeeds(decrypted);
+    try {
+      const mySeeds = await backendActor.get_my_seeds();
+      const decrypted = await Promise.all(
+        mySeeds.map(async ([seedName, cipher, iv]) => {
+          const key = await deriveSymmetricKey(seedName);
+          const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
+          return { name: seedName, phrase: phraseText };
+        }),
+      );
+      setSeeds(decrypted);
+    } catch (error) {
+      setStatus(`Failed to load seeds: ${error.message}`);
+    }
   }
 
   async function handleAddSeed(event) {
@@ -103,7 +107,7 @@ function App() {
       await loadSeeds();
       setStatus('Seed saved');
     } catch (error) {
-      setStatus(`Failed to save seed: ${error}`);
+      setStatus(`Failed to save seed: RejectError (Reject): ${error.message}`);
     }
   }
 
