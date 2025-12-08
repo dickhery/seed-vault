@@ -39,7 +39,8 @@ actor {
         break l ?i;
       };
       i += 1;
-    }
+    };
+    null
   };
 
   private func hasSeedName(seeds : [(Text, Blob, Blob)], name : Text) : Bool {
@@ -53,7 +54,8 @@ actor {
         break l true;
       };
       i += 1;
-    }
+    };
+    false
   };
 
   private func keyId() : VetKdKeyId {
@@ -106,7 +108,17 @@ actor {
           return #err("Name already exists for this user");
         };
         let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(name, cipher, iv)]);
-        seedsByOwner[idx] := (caller, updatedSeeds);
+        let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
+          seedsByOwner.size(),
+          func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
+            if (j == idx) {
+              (caller, updatedSeeds)
+            } else {
+              seedsByOwner[j]
+            }
+          },
+        );
+        seedsByOwner := updatedOwners;
       };
       case null {
         seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(name, cipher, iv)])]);
