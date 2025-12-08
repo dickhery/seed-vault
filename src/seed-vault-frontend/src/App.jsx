@@ -3,10 +3,7 @@ import { AuthClient } from '@dfinity/auth-client';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { TransportSecretKey, EncryptedVetKey, DerivedPublicKey } from '@dfinity/vetkeys';
 
-const II_URL =
-  process.env.DFX_NETWORK === 'ic'
-    ? 'https://identity.ic0.app'
-    : `http://127.0.0.1:4943/?canisterId=${process.env.CANISTER_ID_INTERNET_IDENTITY}`;
+const II_URL = 'https://identity.ic0.app';
 
 function App() {
   const [identity, setIdentity] = useState(null);
@@ -48,15 +45,25 @@ function App() {
 
   async function deriveSymmetricKey(seedName) {
     const transportSecretKey = TransportSecretKey.random();
-    const encryptedKeyBytes = await backendActor.encrypted_symmetric_key_for_seed(
-      seedName,
-      transportSecretKey.publicKeyBytes(),
-    );
+    let encryptedKeyBytes;
+    try {
+      encryptedKeyBytes = await backendActor.encrypted_symmetric_key_for_seed(
+        seedName,
+        transportSecretKey.publicKeyBytes(),
+      );
+    } catch (error) {
+      throw new Error(`vetKD derivation failed: ${error.message}`);
+    }
     const encryptedVetKey = new EncryptedVetKey(new Uint8Array(encryptedKeyBytes));
     const derivedPublicKeyBytes = await backendActor.public_key();
     const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
     const input = new TextEncoder().encode(seedName);
-    const vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
+    let vetKey;
+    try {
+      vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
+    } catch (error) {
+      throw new Error(`vetKD verification failed: ${error.message}`);
+    }
     const hashed = await crypto.subtle.digest('SHA-256', vetKey);
     return new Uint8Array(hashed);
   }
@@ -81,7 +88,7 @@ function App() {
       const decrypted = await Promise.all(
         mySeeds.map(async ([seedName, cipher, iv]) => {
           const key = await deriveSymmetricKey(seedName);
-          const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
+          const phraseText = await decrypt(cipher, key, iv);
           return { name: seedName, phrase: phraseText };
         }),
       );
@@ -97,7 +104,7 @@ function App() {
     try {
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
-      const result = await backendActor.add_seed(name, Array.from(cipher), Array.from(iv));
+      const result = await backendActor.add_seed(name, cipher, iv);
       if ('err' in result) {
         setStatus(result.err);
         return;
