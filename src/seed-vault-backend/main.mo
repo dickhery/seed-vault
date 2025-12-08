@@ -1,13 +1,10 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
-import Iter "mo:base/Iter";
 import Nat8 "mo:base/Nat8";
-import Option "mo:base/Option";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
-import TrieMap "mo:base/TrieMap";
 
 actor {
   // Type definitions for vetKD interactions
@@ -28,7 +25,36 @@ actor {
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
   let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
 
-  stable var seedsByOwner = TrieMap.TrieMap<Principal, TrieMap.TrieMap<Text, { cipher : Blob; iv : Blob }>>(Principal.equal, Principal.hash);
+  // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
+  stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
+
+  private func findOwnerIndex(owner : Principal) : ?Nat {
+    var i : Nat = 0;
+    label l loop {
+      if (i >= seedsByOwner.size()) {
+        break l null;
+      };
+      let (p, _) = seedsByOwner[i];
+      if (Principal.equal(p, owner)) {
+        break l ?i;
+      };
+      i += 1;
+    }
+  };
+
+  private func hasSeedName(seeds : [(Text, Blob, Blob)], name : Text) : Bool {
+    var i : Nat = 0;
+    label l loop {
+      if (i >= seeds.size()) {
+        break l false;
+      };
+      let (n, _, _) = seeds[i];
+      if (Text.equal(n, name)) {
+        break l true;
+      };
+      i += 1;
+    }
+  };
 
   private func keyId() : VetKdKeyId {
     // Use "test_key_1" for mainnet testing; switch to "key_1" for production.
@@ -73,24 +99,29 @@ actor {
     if (Blob.toArray(cipher).size() == 0) {
       return #err("Ciphertext cannot be empty");
     };
-    let userSeeds = Option.get(seedsByOwner.get(caller), TrieMap.TrieMap<Text, { cipher : Blob; iv : Blob }>(Text.equal, Text.hash));
-    switch (userSeeds.get(name)) {
-      case (?_) { return #err("Name already exists for this user"); };
-      case (null) {};
+    switch (findOwnerIndex(caller)) {
+      case (?idx) {
+        let (_, seeds) = seedsByOwner[idx];
+        if (hasSeedName(seeds, name)) {
+          return #err("Name already exists for this user");
+        };
+        let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(name, cipher, iv)]);
+        seedsByOwner[idx] := (caller, updatedSeeds);
+      };
+      case null {
+        seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(name, cipher, iv)])]);
+      };
     };
-    userSeeds.put(name, { cipher; iv });
-    seedsByOwner.put(caller, userSeeds);
     #ok(());
   };
 
   public query ({ caller }) func get_my_seeds() : async [(Text, Blob, Blob)] {
-    switch (seedsByOwner.get(caller)) {
-      case (null) { [] };
-      case (?userSeeds) {
-        Iter.toArray<(Text, Blob, Blob)>(Iter.map<(Text, { cipher : Blob; iv : Blob }), (Text, Blob, Blob)>(userSeeds.entries(), func((n, e)) {
-          (n, e.cipher, e.iv)
-        }));
+    switch (findOwnerIndex(caller)) {
+      case (?idx) {
+        let (_, seeds) = seedsByOwner[idx];
+        seeds;
       };
-    };
+      case null { [] };
+    }
   };
 };
