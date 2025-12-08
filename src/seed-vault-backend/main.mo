@@ -30,7 +30,7 @@ actor {
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
     var i : Nat = 0;
-    label l loop {
+    label l : ?Nat loop {
       if (i >= seedsByOwner.size()) {
         break l null;
       };
@@ -39,13 +39,12 @@ actor {
         break l ?i;
       };
       i += 1;
-    };
-    null
+    }
   };
 
   private func hasSeedName(seeds : [(Text, Blob, Blob)], name : Text) : Bool {
     var i : Nat = 0;
-    label l loop {
+    label l : Bool loop {
       if (i >= seeds.size()) {
         break l false;
       };
@@ -54,8 +53,7 @@ actor {
         break l true;
       };
       i += 1;
-    };
-    false
+    }
   };
 
   private func keyId() : VetKdKeyId {
