@@ -6,7 +6,7 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-actor {
+persistent actor {
   // Type definitions for vetKD interactions
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
