@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
-import { TransportSecretKey, EncryptedVetKey, DerivedPublicKey } from '@dfinity/vetkeys';
+import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
-const II_URL =
-  process.env.DFX_NETWORK === 'ic'
-    ? 'https://identity.ic0.app'
-    : `http://127.0.0.1:4943/?canisterId=${process.env.CANISTER_ID_INTERNET_IDENTITY}`;
+const II_URL = 'https://identity.ic0.app';
 
 function App() {
   const [identity, setIdentity] = useState(null);
@@ -14,6 +11,7 @@ function App() {
   const [name, setName] = useState('');
   const [phrase, setPhrase] = useState('');
   const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -48,16 +46,37 @@ function App() {
 
   async function deriveSymmetricKey(seedName) {
     const transportSecretKey = TransportSecretKey.random();
-    const encryptedKeyBytes = await backendActor.encrypted_symmetric_key_for_seed(
-      seedName,
-      transportSecretKey.publicKeyBytes(),
-    );
-    const encryptedVetKey = new EncryptedVetKey(new Uint8Array(encryptedKeyBytes));
+    let encryptedKeyBytes;
+    try {
+      encryptedKeyBytes = await backendActor.encrypted_symmetric_key_for_seed(
+        seedName,
+        transportSecretKey.publicKeyBytes(),
+      );
+    } catch (error) {
+      throw new Error(`vetKD derivation failed: ${error.message}`);
+    }
+    const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
     const derivedPublicKeyBytes = await backendActor.public_key();
     const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
     const input = new TextEncoder().encode(seedName);
-    const vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
-    const hashed = await crypto.subtle.digest('SHA-256', vetKey);
+    let vetKey;
+    try {
+      vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
+    } catch (error) {
+      throw new Error(`vetKD decryption failed: ${error.message}`);
+    }
+
+    // Ensure the value passed to WebCrypto is an ArrayBufferView/ArrayBuffer.
+    const vetKeyBytes =
+      vetKey instanceof Uint8Array
+        ? vetKey
+        : vetKey instanceof ArrayBuffer
+          ? new Uint8Array(vetKey)
+          : ArrayBuffer.isView(vetKey)
+            ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
+            : new Uint8Array(vetKey);
+
+    const hashed = await crypto.subtle.digest('SHA-256', vetKeyBytes);
     return new Uint8Array(hashed);
   }
 
@@ -76,28 +95,32 @@ function App() {
   }
 
   async function loadSeeds() {
+    setLoading(true);
     try {
       const mySeeds = await backendActor.get_my_seeds();
       const decrypted = await Promise.all(
         mySeeds.map(async ([seedName, cipher, iv]) => {
           const key = await deriveSymmetricKey(seedName);
-          const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
+          const phraseText = await decrypt(cipher, key, iv);
           return { name: seedName, phrase: phraseText };
         }),
       );
       setSeeds(decrypted);
     } catch (error) {
       setStatus(`Failed to load seeds: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleAddSeed(event) {
     event.preventDefault();
     setStatus('Encrypting and saving seed...');
+    setLoading(true);
     try {
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
-      const result = await backendActor.add_seed(name, Array.from(cipher), Array.from(iv));
+      const result = await backendActor.add_seed(name, cipher, iv);
       if ('err' in result) {
         setStatus(result.err);
         return;
@@ -107,7 +130,9 @@ function App() {
       await loadSeeds();
       setStatus('Seed saved');
     } catch (error) {
-      setStatus(`Failed to save seed: RejectError (Reject): ${error.message}`);
+      setStatus(`Failed to save seed: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -153,7 +178,7 @@ function App() {
                   placeholder="twelve random words..."
                 />
               </label>
-              <button type="submit" disabled={!name || !phrase}>
+              <button type="submit" disabled={!name || !phrase || loading}>
                 Save encrypted seed
               </button>
             </form>
@@ -162,7 +187,9 @@ function App() {
 
           <section className="card">
             <h2>Your seeds</h2>
-            {seeds.length === 0 ? (
+            {loading ? (
+              <p className="muted">Loading...</p>
+            ) : seeds.length === 0 ? (
               <p className="muted">No seeds stored yet.</p>
             ) : (
               <ul className="seed-list">
