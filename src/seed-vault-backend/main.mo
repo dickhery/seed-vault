@@ -1,7 +1,6 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Error "mo:base/Error";
-import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
 import Nat64 "mo:base/Nat64";
@@ -9,7 +8,7 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-actor {
+actor Self {
   // Type definitions for vetKD interactions
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -143,7 +142,7 @@ actor {
 
   private func chargeUser(caller : Principal, amount : Nat) : async Result.Result<Nat, Text> {
     let callerSub = subaccount(caller);
-    let account : Account = { owner = Principal.fromActor(this); subaccount = ?callerSub };
+    let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
 
     let balance = try {
       await LEDGER.icrc1_balance_of(account)
@@ -157,7 +156,7 @@ actor {
     let transferResult = try {
       await LEDGER.icrc1_transfer({
         from_subaccount = ?callerSub;
-        to = { owner = Principal.fromActor(this); subaccount = null };
+        to = { owner = Principal.fromActor(Self); subaccount = null };
         amount = amount;
         fee = ?ICP_TRANSFER_FEE;
         memo = null;
@@ -205,7 +204,7 @@ actor {
     balance : Nat;
   } {
     let callerSub = subaccount(caller);
-    let account : Account = { owner = Principal.fromActor(this); subaccount = ?callerSub };
+    let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
     let balance = try {
       await LEDGER.icrc1_balance_of(account)
     } catch (e) {
@@ -213,7 +212,7 @@ actor {
     };
     {
       owner = Principal.toText(caller);
-      canister = Principal.toText(Principal.fromActor(this));
+      canister = Principal.toText(Principal.fromActor(Self));
       subaccount = callerSub;
       balance;
     };
@@ -237,8 +236,7 @@ actor {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input : Blob = Text.encodeUtf8(name);
-    ExperimentalCycles.add<system>(26_153_846_153);
-    let { encrypted_key } = await IC.vetkd_derive_key({
+    let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
       input;
       context = context(caller);
       key_id = keyId();
