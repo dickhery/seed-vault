@@ -9,7 +9,7 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-persistent actor {
+actor {
   // Type definitions for vetKD interactions
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -40,7 +40,7 @@ persistent actor {
   };
 
   // XRC exchange rate types
-  type XrcAsset = { symbol : Text; class : { #Cryptocurrency; #FiatCurrency } };
+  type XrcAsset = { symbol : Text; `class` : { #Cryptocurrency; #FiatCurrency } };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
   type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
   type Xrc = actor {
@@ -112,8 +112,8 @@ persistent actor {
 
   private func cyclesToIcp(cycles : Nat) : async Nat {
     let request : XrcGetExchangeRateRequest = {
-      base_asset = { symbol = "ICP"; class = #Cryptocurrency };
-      quote_asset = { symbol = "XDR"; class = #FiatCurrency };
+      base_asset = { symbol = "ICP"; `class` = #Cryptocurrency };
+      quote_asset = { symbol = "XDR"; `class` = #FiatCurrency };
       timestamp = null;
     };
     let rateResult = try {
