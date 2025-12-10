@@ -118,7 +118,7 @@ persistent actor Self {
     };
     let rateResult = try {
       await XRC.get_exchange_rate(request)
-    } catch (e) {
+    } catch (_) {
       return (cycles * ICP_PER_XDR_FALLBACK) / CYCLES_PER_XDR;
     };
     let icpPerXdr : Nat = switch (rateResult) {
@@ -207,7 +207,7 @@ persistent actor Self {
     let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
     let balance = try {
       await LEDGER.icrc1_balance_of(account)
-    } catch (e) {
+    } catch (_) {
       0
     };
     {
@@ -218,7 +218,7 @@ persistent actor Self {
     };
   };
 
-  public shared ({ caller }) func estimate_cost(operation : Text, count : Nat) : async {
+  public shared ({ caller = _ }) func estimate_cost(operation : Text, count : Nat) : async {
     cycles : Nat;
     icp_e8s : Nat;
   } {
