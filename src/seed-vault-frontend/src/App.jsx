@@ -2,12 +2,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
 import CryptoJS from 'crypto-js';
-import crc32 from 'crc/crc32';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
 const II_URL = 'https://identity.ic0.app';
 const LEDGER_FEE_E8S = 10_000;
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let j = 0; j < 8; j += 1) {
+      c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
 
 function toHex(bytes = []) {
   return Array.from(bytes)
@@ -47,7 +58,11 @@ function computeAccountId(canisterPrincipal, subaccountBytes) {
 
   const hash = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data));
   const hashBytes = wordArrayToUint8Array(hash);
-  const checksum = crc32(hashBytes) >>> 0;
+  let checksum = 0xffffffff;
+  for (let i = 0; i < hashBytes.length; i += 1) {
+    checksum = CRC32_TABLE[(checksum ^ hashBytes[i]) & 0xff] ^ (checksum >>> 8);
+  }
+  checksum ^= 0xffffffff;
   const checksumBytes = new Uint8Array([
     (checksum >>> 24) & 0xff,
     (checksum >>> 16) & 0xff,
