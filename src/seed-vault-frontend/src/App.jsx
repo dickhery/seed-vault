@@ -4,6 +4,17 @@ import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
 const II_URL = 'https://identity.ic0.app';
+const LEDGER_FEE_E8S = 10_000;
+
+function toHex(bytes = []) {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function formatIcp(e8s) {
+  return (Number(e8s) / 1e8).toFixed(6);
+}
 
 function App() {
   const [identity, setIdentity] = useState(null);
@@ -12,6 +23,8 @@ function App() {
   const [phrase, setPhrase] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const [accountDetails, setAccountDetails] = useState(null);
+  const [paymentPrompt, setPaymentPrompt] = useState(null);
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -22,6 +35,7 @@ function App() {
 
   useEffect(() => {
     if (identity) {
+      loadAccount();
       loadSeeds();
     }
   }, [identity, backendActor]);
@@ -42,6 +56,39 @@ function App() {
     await authClient.logout();
     setIdentity(null);
     setSeeds([]);
+    setAccountDetails(null);
+  }
+
+  async function loadAccount() {
+    try {
+      const details = await backendActor.get_account_details();
+      setAccountDetails(details);
+    } catch (error) {
+      setStatus(`Unable to fetch account details: ${error.message}`);
+    }
+  }
+
+  async function ensureFunds(operation, count) {
+    const { icp_e8s } = await backendActor.estimate_cost(operation, count);
+    const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+    setPaymentPrompt({
+      operation,
+      required,
+    });
+
+    let checks = 0;
+    while (checks < 12) {
+      const details = await backendActor.get_account_details();
+      setAccountDetails(details);
+      if (Number(details.balance) >= required) {
+        setPaymentPrompt(null);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      checks += 1;
+    }
+    setPaymentPrompt(null);
+    throw new Error('Insufficient funds to cover cycle costs.');
   }
 
   async function deriveSymmetricKey(seedName) {
@@ -97,9 +144,17 @@ function App() {
   async function loadSeeds() {
     setLoading(true);
     try {
-      const mySeeds = await backendActor.get_my_seeds();
+      const count = await backendActor.seed_count();
+      if (Number(count) > 0) {
+        await ensureFunds('decrypt', Number(count));
+      }
+      const result = await backendActor.get_my_seeds();
+      if ('err' in result) {
+        setStatus(result.err);
+        return;
+      }
       const decrypted = await Promise.all(
-        mySeeds.map(async ([seedName, cipher, iv]) => {
+        result.ok.map(async ([seedName, cipher, iv]) => {
           const key = await deriveSymmetricKey(seedName);
           const phraseText = await decrypt(cipher, key, iv);
           return { name: seedName, phrase: phraseText };
@@ -118,6 +173,7 @@ function App() {
     setStatus('Encrypting and saving seed...');
     setLoading(true);
     try {
+      await ensureFunds('encrypt', 1);
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
       const result = await backendActor.add_seed(name, cipher, iv);
@@ -157,6 +213,37 @@ function App() {
 
       {identity ? (
         <div className="content">
+          <section className="card">
+            <h2>Billing & Funding</h2>
+            <p>
+              Your principal: <strong>{identity.getPrincipal().toText()}</strong>
+            </p>
+            {accountDetails ? (
+              <>
+                <p>
+                  Deposit to canister <strong>{accountDetails.canister}</strong> using
+                  subaccount <code>{toHex(accountDetails.subaccount)}</code>.
+                </p>
+                <p>
+                  Available balance for this app:{' '}
+                  <strong>{formatIcp(accountDetails.balance)} ICP</strong>
+                </p>
+              </>
+            ) : (
+              <p className="muted">Loading account details...</p>
+            )}
+            <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
+            {paymentPrompt && (
+              <div className="callout">
+                <p>
+                  Please transfer at least <strong>{formatIcp(paymentPrompt.required)} ICP</strong> to
+                  the account above to pay for {paymentPrompt.operation} costs.
+                </p>
+                <p className="muted">Waiting for funds to arrive...</p>
+              </div>
+            )}
+          </section>
+
           <section className="card">
             <h2>Add a seed phrase</h2>
             <form onSubmit={handleAddSeed}>
