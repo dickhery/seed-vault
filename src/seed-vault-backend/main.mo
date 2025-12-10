@@ -1,6 +1,7 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Error "mo:base/Error";
+import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
 import Nat64 "mo:base/Nat64";
@@ -8,7 +9,7 @@ import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 
-persistent actor Self {
+actor {
   // Type definitions for vetKD interactions
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -100,13 +101,18 @@ persistent actor Self {
 
   private func subaccount(principal : Principal) : Blob {
     let raw = Blob.toArray(Principal.toBlob(principal));
+    let len = raw.size();
+
     let padded = Array.tabulate<Nat8>(32, func(i : Nat) : Nat8 {
-      if (i < raw.size()) {
-        raw[i]
+      if (i == 0) {
+        Nat8.fromNat(len)
+      } else if (i <= len) {
+        raw[i - 1]
       } else {
         0
       }
     });
+
     Blob.fromArray(padded);
   };
 
@@ -142,7 +148,7 @@ persistent actor Self {
 
   private func chargeUser(caller : Principal, amount : Nat) : async Result.Result<Nat, Text> {
     let callerSub = subaccount(caller);
-    let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
+    let account : Account = { owner = Principal.fromActor(this); subaccount = ?callerSub };
 
     let balance = try {
       await LEDGER.icrc1_balance_of(account)
@@ -156,7 +162,7 @@ persistent actor Self {
     let transferResult = try {
       await LEDGER.icrc1_transfer({
         from_subaccount = ?callerSub;
-        to = { owner = Principal.fromActor(Self); subaccount = null };
+        to = { owner = Principal.fromActor(this); subaccount = null };
         amount = amount;
         fee = ?ICP_TRANSFER_FEE;
         memo = null;
@@ -204,7 +210,7 @@ persistent actor Self {
     balance : Nat;
   } {
     let callerSub = subaccount(caller);
-    let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
+    let account : Account = { owner = Principal.fromActor(this); subaccount = ?callerSub };
     let balance = try {
       await LEDGER.icrc1_balance_of(account)
     } catch (e) {
@@ -212,7 +218,7 @@ persistent actor Self {
     };
     {
       owner = Principal.toText(caller);
-      canister = Principal.toText(Principal.fromActor(Self));
+      canister = Principal.toText(Principal.fromActor(this));
       subaccount = callerSub;
       balance;
     };
@@ -236,7 +242,8 @@ persistent actor Self {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input : Blob = Text.encodeUtf8(name);
-    let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
+    ExperimentalCycles.add<system>(26_153_846_153);
+    let { encrypted_key } = await IC.vetkd_derive_key({
       input;
       context = context(caller);
       key_id = keyId();

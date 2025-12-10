@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
+import { Principal } from '@dfinity/principal';
+import { sha224 } from '@noble/hashes/sha256';
 
 const II_URL = 'https://identity.ic0.app';
 const LEDGER_FEE_E8S = 10_000;
@@ -14,6 +16,49 @@ function toHex(bytes = []) {
 
 function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
+}
+
+function crc32(bytes = []) {
+  const table = new Uint32Array(256).map((_, i) => {
+    let c = i;
+    for (let j = 0; j < 8; j++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    return c >>> 0;
+  });
+
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc = (crc >>> 8) ^ table[(crc ^ byte) & 0xff];
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function accountIdentifier(canisterText, subaccountBytes) {
+  const owner = Principal.fromText(canisterText);
+  const ownerBytes = owner.toUint8Array();
+  const domain = new Uint8Array([0x0a, ...new TextEncoder().encode('account-id')]);
+  const sub = new Uint8Array(subaccountBytes ?? []);
+
+  const data = new Uint8Array(domain.length + ownerBytes.length + sub.length);
+  data.set(domain, 0);
+  data.set(ownerBytes, domain.length);
+  data.set(sub, domain.length + ownerBytes.length);
+
+  const hash = sha224(data);
+  const checksum = crc32(hash);
+  const checksumBytes = new Uint8Array([
+    (checksum >>> 24) & 0xff,
+    (checksum >>> 16) & 0xff,
+    (checksum >>> 8) & 0xff,
+    checksum & 0xff,
+  ]);
+
+  const aid = new Uint8Array(checksumBytes.length + hash.length);
+  aid.set(checksumBytes, 0);
+  aid.set(hash, checksumBytes.length);
+  return toHex(aid).toUpperCase();
 }
 
 function App() {
@@ -62,7 +107,8 @@ function App() {
   async function loadAccount() {
     try {
       const details = await backendActor.get_account_details();
-      setAccountDetails(details);
+      const aid = accountIdentifier(details.canister, details.subaccount);
+      setAccountDetails({ ...details, accountIdentifier: aid });
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
     }
@@ -221,8 +267,7 @@ function App() {
             {accountDetails ? (
               <>
                 <p>
-                  Deposit to canister <strong>{accountDetails.canister}</strong> using
-                  subaccount <code>{toHex(accountDetails.subaccount)}</code>.
+                  Deposit ICP to Account Identifier <code>{accountDetails.accountIdentifier}</code>.
                 </p>
                 <p>
                   Available balance for this app:{' '}
