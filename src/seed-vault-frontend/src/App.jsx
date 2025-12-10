@@ -255,9 +255,19 @@ function App() {
 
   async function handleAddSeed(event) {
     event.preventDefault();
-    setStatus('Encrypting and saving seed...');
-    setLoading(true);
+    if (!name || !phrase) return;
     try {
+      const { icp_e8s } = await backendActor.estimate_cost('encrypt', 1);
+      const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+      const confirmed = window.confirm(
+        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fee). Continue?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setStatus('Encrypting and saving seed...');
+      setLoading(true);
       await ensureFunds('encrypt', 1);
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
