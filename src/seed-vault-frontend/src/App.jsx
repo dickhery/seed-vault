@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
+import { Principal } from '@dfinity/principal';
+import CryptoJS from 'crypto-js';
+import crc32 from 'crc/crc32';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
@@ -14,6 +17,49 @@ function toHex(bytes = []) {
 
 function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
+}
+
+function wordArrayToUint8Array(wordArray) {
+  const { words, sigBytes } = wordArray;
+  const result = new Uint8Array(sigBytes);
+  for (let i = 0; i < sigBytes; i += 1) {
+    const word = words[i >>> 2];
+    result[i] = (word >>> (24 - (i % 4) * 8)) & 0xff;
+  }
+  return result;
+}
+
+function computeAccountId(canisterPrincipal, subaccountBytes) {
+  const owner = Principal.fromText(canisterPrincipal);
+  const ownerBytes = owner.toUint8Array();
+  const sub = new Uint8Array(32);
+  if (subaccountBytes) {
+    const provided = new Uint8Array(subaccountBytes);
+    sub.set(provided.subarray(0, Math.min(provided.length, 32)));
+  }
+
+  const domainBuffer = new TextEncoder().encode('account-id');
+  const data = new Uint8Array(1 + domainBuffer.length + ownerBytes.length + sub.length);
+  data[0] = 0x0a;
+  data.set(domainBuffer, 1);
+  data.set(ownerBytes, 1 + domainBuffer.length);
+  data.set(sub, 1 + domainBuffer.length + ownerBytes.length);
+
+  const hash = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data));
+  const hashBytes = wordArrayToUint8Array(hash);
+  const checksum = crc32(hashBytes) >>> 0;
+  const checksumBytes = new Uint8Array([
+    (checksum >>> 24) & 0xff,
+    (checksum >>> 16) & 0xff,
+    (checksum >>> 8) & 0xff,
+    checksum & 0xff,
+  ]);
+
+  const accountId = new Uint8Array(4 + hashBytes.length);
+  accountId.set(checksumBytes);
+  accountId.set(hashBytes, 4);
+
+  return toHex(accountId).toUpperCase();
 }
 
 function App() {
@@ -221,12 +267,16 @@ function App() {
             {accountDetails ? (
               <>
                 <p>
-                  Deposit to canister <strong>{accountDetails.canister}</strong> using
-                  subaccount <code>{toHex(accountDetails.subaccount)}</code>.
+                  Deposit ICP to Account ID:{' '}
+                  <strong>{computeAccountId(accountDetails.canister, accountDetails.subaccount)}</strong>
                 </p>
                 <p>
                   Available balance for this app:{' '}
                   <strong>{formatIcp(accountDetails.balance)} ICP</strong>
+                </p>
+                <p className="muted">
+                  (Canister: {accountDetails.canister} · Subaccount:{' '}
+                  <code>{toHex(accountDetails.subaccount)}</code>)
                 </p>
               </>
             ) : (
