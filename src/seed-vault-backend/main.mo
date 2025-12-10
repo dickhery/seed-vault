@@ -234,6 +234,16 @@ persistent actor Self {
     };
   };
 
+  public query ({ caller }) func get_seed_names() : async [Text] {
+    switch (findOwnerIndex(caller)) {
+      case (?idx) {
+        let (_, seeds) = seedsByOwner[idx];
+        Array.map<(Text, Blob, Blob), Text>(seeds, func((n, _, _)) : Text { n });
+      };
+      case null { [] };
+    };
+  };
+
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let input : Blob = Text.encodeUtf8(name);
     let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
@@ -299,5 +309,31 @@ persistent actor Self {
       };
       case null { #ok([]) };
     }
+  };
+
+  public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
+    let { icp_e8s } = await estimate_cost("decrypt", 1);
+    switch (await chargeUser(caller, icp_e8s)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(_)) {};
+    };
+
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (_, seeds) = seedsByOwner[idx];
+        var found : ?(Blob, Blob) = null;
+        label search for ((n, c, ivVal) in Array.vals(seeds)) {
+          if (Text.equal(n, name)) {
+            found := ?(c, ivVal);
+            break search;
+          };
+        };
+        switch (found) {
+          case null { #err("Seed not found: " # name) };
+          case (?pair) { #ok(pair) };
+        };
+      };
+    };
   };
 };

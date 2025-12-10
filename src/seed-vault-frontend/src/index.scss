@@ -152,6 +152,13 @@ textarea {
   padding: 0.85rem 1rem;
 }
 
+.seed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 .seed-name {
   font-weight: 700;
   margin: 0 0 0.35rem;

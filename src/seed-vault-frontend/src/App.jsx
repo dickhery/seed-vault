@@ -79,7 +79,8 @@ function computeAccountId(canisterPrincipal, subaccountBytes) {
 
 function App() {
   const [identity, setIdentity] = useState(null);
-  const [seeds, setSeeds] = useState([]);
+  const [seedNames, setSeedNames] = useState([]);
+  const [decryptedSeeds, setDecryptedSeeds] = useState({});
   const [name, setName] = useState('');
   const [phrase, setPhrase] = useState('');
   const [status, setStatus] = useState('');
@@ -116,7 +117,8 @@ function App() {
     const authClient = await AuthClient.create();
     await authClient.logout();
     setIdentity(null);
-    setSeeds([]);
+    setSeedNames([]);
+    setDecryptedSeeds({});
     setAccountDetails(null);
   }
 
@@ -205,25 +207,47 @@ function App() {
   async function loadSeeds() {
     setLoading(true);
     try {
-      const count = await backendActor.seed_count();
-      if (Number(count) > 0) {
-        await ensureFunds('decrypt', Number(count));
-      }
-      const result = await backendActor.get_my_seeds();
-      if ('err' in result) {
-        setStatus(result.err);
-        return;
-      }
-      const decrypted = await Promise.all(
-        result.ok.map(async ([seedName, cipher, iv]) => {
-          const key = await deriveSymmetricKey(seedName);
-          const phraseText = await decrypt(cipher, key, iv);
-          return { name: seedName, phrase: phraseText };
-        }),
-      );
-      setSeeds(decrypted);
+      const names = await backendActor.get_seed_names();
+      setSeedNames(names);
+      setDecryptedSeeds((current) => {
+        const retained = {};
+        names.forEach((seedName) => {
+          if (current[seedName]) {
+            retained[seedName] = current[seedName];
+          }
+        });
+        return retained;
+      });
     } catch (error) {
       setStatus(`Failed to load seeds: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function decryptSeed(seedName) {
+    try {
+      const { icp_e8s } = await backendActor.estimate_cost('decrypt', 1);
+      const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+      const confirmed = window.confirm(
+        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fee). Continue?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setLoading(true);
+      await ensureFunds('decrypt', 1);
+      const result = await backendActor.get_seed_cipher(seedName);
+      if ('err' in result) {
+        throw new Error(result.err);
+      }
+      const [cipher, iv] = result.ok;
+      const key = await deriveSymmetricKey(seedName);
+      const phraseText = await decrypt(cipher, key, iv);
+      setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
+    } catch (error) {
+      setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -341,15 +365,24 @@ function App() {
             <h2>Your seeds</h2>
             {loading ? (
               <p className="muted">Loading...</p>
-            ) : seeds.length === 0 ? (
+            ) : seedNames.length === 0 ? (
               <p className="muted">No seeds stored yet.</p>
             ) : (
               <ul className="seed-list">
-                {seeds.map((seed) => (
-                  <li key={seed.name}>
-                    <div>
-                      <p className="seed-name">{seed.name}</p>
-                      <p className="seed-phrase">{seed.phrase}</p>
+                {seedNames.map((seedName) => (
+                  <li key={seedName}>
+                    <div className="seed-row">
+                      <div>
+                        <p className="seed-name">{seedName}</p>
+                        {decryptedSeeds[seedName] && (
+                          <p className="seed-phrase">{decryptedSeeds[seedName]}</p>
+                        )}
+                      </div>
+                      {!decryptedSeeds[seedName] && (
+                        <button onClick={() => decryptSeed(seedName)} disabled={loading}>
+                          Decrypt
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}
