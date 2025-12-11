@@ -1,6 +1,7 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Error "mo:base/Error";
+import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
 import Nat64 "mo:base/Nat64";
@@ -142,17 +143,15 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
       timestamp = null;
     };
-    let rateResult = try {
-      await XRC.get_exchange_rate(request)
-    } catch (_) {
-      return (cycles * ICP_PER_XDR_FALLBACK) / CYCLES_PER_XDR + ICP_TO_CYCLES_BUFFER_E8S;
-    };
-    let icpPerXdr : Nat = switch (rateResult) {
+    let fallback_rate : Nat = 2_000_000_000; // 0.5 ICP/XDR expressed as rate (XDR per ICP)*1e9 => 2e9
+    let rateResult = try { await XRC.get_exchange_rate(request) } catch (_) { #Err("xrc unavailable") };
+    let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) { Nat64.toNat(rate) };
-      case (#Err(_)) { ICP_PER_XDR_FALLBACK };
+      case (#Err(_)) { fallback_rate };
     };
-    let numerator = cycles * icpPerXdr;
-    let baseCost = if (CYCLES_PER_XDR == 0) { 0 } else { numerator / CYCLES_PER_XDR };
+    let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
+    let numerator : Nat = cycles * 100_000;
+    let baseCost = numerator / effectiveRate;
     baseCost + ICP_TO_CYCLES_BUFFER_E8S;
   };
 
@@ -216,7 +215,7 @@ persistent actor Self {
           await CMC.notify_mint_cycles(notifyArgs);
           #ok(())
         } catch (e) {
-          #err("CMC notify failed: " # Error.message(e))
+          #err("CMC notify failed: " # Error.message(e) # ". Cycles may not have been minted—check ledger.")
         };
       };
     };
@@ -392,29 +391,6 @@ persistent actor Self {
     #ok(());
   };
 
-  public shared ({ caller }) func get_my_seeds() : async Result.Result<[(Text, Blob, Blob)], Text> {
-    switch (findOwnerIndex(caller)) {
-      case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
-        if (seeds.size() == 0) {
-          return #ok(seeds);
-        };
-        let { icp_e8s } = await estimate_cost("decrypt", seeds.size());
-        switch (await chargeUser(caller, icp_e8s)) {
-          case (#err(msg)) { return #err(msg) };
-          case (#ok(_)) {};
-        };
-        let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-        switch (await convertToCycles(amountToConvert)) {
-          case (#err(msg)) { return #err(msg) };
-          case (#ok(())) {};
-        };
-        #ok(seeds);
-      };
-      case null { #ok([]) };
-    }
-  };
-
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
     let { icp_e8s } = await estimate_cost("decrypt", 1);
     switch (await chargeUser(caller, icp_e8s)) {
@@ -444,5 +420,9 @@ persistent actor Self {
         };
       };
     };
+  };
+
+  public query func canister_cycles() : async Nat {
+    ExperimentalCycles.balance()
   };
 };

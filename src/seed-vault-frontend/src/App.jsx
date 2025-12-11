@@ -86,6 +86,7 @@ function App() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [accountDetails, setAccountDetails] = useState(null);
+  const [canisterCycles, setCanisterCycles] = useState(0);
   const [paymentPrompt, setPaymentPrompt] = useState(null);
 
   const backendActor = useMemo(() => {
@@ -126,6 +127,8 @@ function App() {
     try {
       const details = await backendActor.get_account_details();
       setAccountDetails(details);
+      const cycles = await backendActor.canister_cycles();
+      setCanisterCycles(Number(cycles));
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
     }
@@ -251,6 +254,7 @@ function App() {
       const key = await deriveSymmetricKey(seedName);
       const phraseText = await decrypt(cipher, key, iv);
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
+      await loadAccount();
     } catch (error) {
       setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
     } finally {
@@ -288,6 +292,7 @@ function App() {
       setName('');
       setPhrase('');
       await loadSeeds();
+      await loadAccount();
       setStatus('Seed saved');
     } catch (error) {
       setStatus(`Failed to save seed: ${error.message}`);
@@ -332,6 +337,9 @@ function App() {
                   Available balance for this app:{' '}
                   <strong>{formatIcp(accountDetails.balance)} ICP</strong>
                 </p>
+                <p>
+                  Canister cycles: <strong>{canisterCycles.toLocaleString()}</strong>
+                </p>
                 <p className="muted">
                   (Canister: {accountDetails.canister} · Subaccount:{' '}
                   <code>{toHex(accountDetails.subaccount)}</code>)
@@ -341,6 +349,7 @@ function App() {
               <p className="muted">Loading account details...</p>
             )}
             <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
+            <button onClick={loadAccount} disabled={loading}>Refresh balance & cycles</button>
             {paymentPrompt && (
               <div className="callout">
                 <p>
