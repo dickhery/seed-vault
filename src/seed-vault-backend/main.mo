@@ -53,9 +53,15 @@ persistent actor Self {
     vetkd_derive_key : VetKdDeriveKeyArgs -> async EncryptedKeyReply;
   };
 
+  type NotifyArg = { block_index : Nat64 };
+  type CyclesMintingCanister = actor {
+    notify_mint_cycles : NotifyArg -> async ();
+  };
+
   let IC : VetKdApi = actor "aaaaa-aa";
   let LEDGER : Ledger = actor "ryjl3-tyaaa-aaaaa-aaaba-cai";
   let XRC : Xrc = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
+  let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
   let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
@@ -65,6 +71,11 @@ persistent actor Self {
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let ENCRYPT_CYCLE_COST : Nat = 30_000_000_000;
   let DECRYPT_CYCLE_COST : Nat = 30_000_000_000;
+  let DERIVE_CYCLE_COST : Nat = 30_000_000_000;
+  // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
+  let ICP_TO_CYCLES_BUFFER_E8S : Nat = 10_000;
+  let CMC_PRINCIPAL : Principal = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");
+  let MINT_MEMO : Blob = Blob.fromArray([77, 73, 78, 84, 0, 0, 0, 0]); // "MINT\00\00\00\00"
 
   // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
@@ -110,6 +121,21 @@ persistent actor Self {
     Blob.fromArray(padded);
   };
 
+  // CMC expects a length-prefixed subaccount derived from the caller principal.
+  private func cmcSubaccount(principal : Principal) : Blob {
+    let raw = Blob.toArray(Principal.toBlob(principal));
+    let padded = Array.tabulate<Nat8>(32, func(i : Nat) : Nat8 {
+      if (i == 0) {
+        Nat8.fromNat(raw.size())
+      } else if (i <= raw.size()) {
+        raw[i - 1]
+      } else {
+        0
+      }
+    });
+    Blob.fromArray(padded)
+  };
+
   private func cyclesToIcp(cycles : Nat) : async Nat {
     let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; asset_class = #Cryptocurrency };
@@ -119,7 +145,7 @@ persistent actor Self {
     let rateResult = try {
       await XRC.get_exchange_rate(request)
     } catch (_) {
-      return (cycles * ICP_PER_XDR_FALLBACK) / CYCLES_PER_XDR;
+      return (cycles * ICP_PER_XDR_FALLBACK) / CYCLES_PER_XDR + ICP_TO_CYCLES_BUFFER_E8S;
     };
     let icpPerXdr : Nat = switch (rateResult) {
       case (#Ok({ rate })) { Nat64.toNat(rate) };
@@ -127,7 +153,7 @@ persistent actor Self {
     };
     let numerator = cycles * icpPerXdr;
     let baseCost = if (CYCLES_PER_XDR == 0) { 0 } else { numerator / CYCLES_PER_XDR };
-    baseCost;
+    baseCost + ICP_TO_CYCLES_BUFFER_E8S;
   };
 
   private func operationCycles(operation : Text, count : Nat) : Nat {
@@ -135,8 +161,64 @@ persistent actor Self {
       ENCRYPT_CYCLE_COST * count
     } else if (Text.equal(operation, "decrypt")) {
       DECRYPT_CYCLE_COST * count
+    } else if (Text.equal(operation, "derive")) {
+      DERIVE_CYCLE_COST * count
     } else {
       0
+    };
+  };
+
+  // Convert collected ICP into cycles by sending ICP to the CMC and notifying it.
+  private func convertToCycles(amount : Nat) : async Result.Result<(), Text> {
+    if (amount == 0) {
+      return #ok(());
+    };
+
+    let selfPrincipal = Principal.fromActor(Self);
+    let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
+    let balance = try {
+      await LEDGER.icrc1_balance_of(defaultAccount)
+    } catch (e) {
+      return #err("Unable to check canister balance: " # Error.message(e));
+    };
+
+    if (balance < amount + ICP_TRANSFER_FEE) {
+      return #err("Insufficient ICP in canister to convert to cycles");
+    };
+
+    let cmcAccount : Account = { owner = CMC_PRINCIPAL; subaccount = ?cmcSubaccount(selfPrincipal) };
+    let transferArgs : TransferArg = {
+      from_subaccount = null;
+      to = cmcAccount;
+      amount = amount;
+      fee = ?ICP_TRANSFER_FEE;
+      memo = ?MINT_MEMO;
+      created_at_time = null;
+    };
+
+    let transferResult = try {
+      await LEDGER.icrc1_transfer(transferArgs)
+    } catch (e) {
+      return #err("Failed to transfer to CMC: " # Error.message(e));
+    };
+
+    switch (transferResult) {
+      case (#Err(#InsufficientFunds)) { return #err("CMC transfer: insufficient funds") };
+      case (#Err(#BadFee({ expected_fee }))) {
+        return #err("CMC transfer: incorrect fee. Expected " # Nat.toText(expected_fee))
+      };
+      case (#Err(#GenericError({ message }))) {
+        return #err("CMC transfer error: " # message)
+      };
+      case (#Ok(blockIndex)) {
+        let notifyArgs : NotifyArg = { block_index = Nat64.fromNat(blockIndex) };
+        try {
+          await CMC.notify_mint_cycles(notifyArgs);
+          #ok(())
+        } catch (e) {
+          #err("CMC notify failed: " # Error.message(e))
+        };
+      };
     };
   };
 
@@ -245,6 +327,12 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
+    let { icp_e8s } = await estimate_cost("derive", 1);
+    switch (await chargeUser(caller, icp_e8s)) {
+      case (#err(msg)) { throw Error.reject(msg) };
+      case (#ok(_)) {};
+    };
+
     let input : Blob = Text.encodeUtf8(name);
     let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
       input;
@@ -252,6 +340,12 @@ persistent actor Self {
       key_id = keyId();
       transport_public_key;
     });
+
+    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+    switch (await convertToCycles(amountToConvert)) {
+      case (#err(msg)) { throw Error.reject(msg) };
+      case (#ok(())) {};
+    };
     encrypted_key;
   };
 
@@ -266,6 +360,11 @@ persistent actor Self {
     switch (await chargeUser(caller, icp_e8s)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(_)) {};
+    };
+    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+    switch (await convertToCycles(amountToConvert)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
     };
     switch (findOwnerIndex(caller)) {
       case (?idx) {
@@ -305,6 +404,11 @@ persistent actor Self {
           case (#err(msg)) { return #err(msg) };
           case (#ok(_)) {};
         };
+        let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+        switch (await convertToCycles(amountToConvert)) {
+          case (#err(msg)) { return #err(msg) };
+          case (#ok(())) {};
+        };
         #ok(seeds);
       };
       case null { #ok([]) };
@@ -316,6 +420,11 @@ persistent actor Self {
     switch (await chargeUser(caller, icp_e8s)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(_)) {};
+    };
+    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+    switch (await convertToCycles(amountToConvert)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
     };
 
     switch (findOwnerIndex(caller)) {

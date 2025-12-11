@@ -227,10 +227,14 @@ function App() {
 
   async function decryptSeed(seedName) {
     try {
-      const { icp_e8s } = await backendActor.estimate_cost('decrypt', 1);
-      const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+      const [decryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('decrypt', 1),
+        backendActor.estimate_cost('derive', 1),
+      ]);
+
+      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fee). Continue?`,
+        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
       );
       if (!confirmed) {
         return;
@@ -238,6 +242,7 @@ function App() {
 
       setLoading(true);
       await ensureFunds('decrypt', 1);
+      await ensureFunds('derive', 1);
       const result = await backendActor.get_seed_cipher(seedName);
       if ('err' in result) {
         throw new Error(result.err);
@@ -257,10 +262,13 @@ function App() {
     event.preventDefault();
     if (!name || !phrase) return;
     try {
-      const { icp_e8s } = await backendActor.estimate_cost('encrypt', 1);
-      const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+      const [encryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('encrypt', 1),
+        backendActor.estimate_cost('derive', 1),
+      ]);
+      const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fee). Continue?`,
+        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
       );
       if (!confirmed) {
         return;
@@ -269,6 +277,7 @@ function App() {
       setStatus('Encrypting and saving seed...');
       setLoading(true);
       await ensureFunds('encrypt', 1);
+      await ensureFunds('derive', 1);
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
       const result = await backendActor.add_seed(name, cipher, iv);
