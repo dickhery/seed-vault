@@ -73,7 +73,7 @@ persistent actor Self {
   let DECRYPT_CYCLE_COST : Nat = 30_000_000_000;
   let DERIVE_CYCLE_COST : Nat = 30_000_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
-  let ICP_TO_CYCLES_BUFFER_E8S : Nat = 10_000;
+  let ICP_TO_CYCLES_BUFFER_E8S : Nat = ICP_TRANSFER_FEE;
   let CMC_PRINCIPAL : Principal = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");
   let MINT_MEMO : Blob = Blob.fromArray([77, 73, 78, 84, 0, 0, 0, 0]); // "MINT\00\00\00\00"
   let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
