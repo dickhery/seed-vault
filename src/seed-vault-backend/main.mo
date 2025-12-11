@@ -61,7 +61,6 @@ persistent actor Self {
   let IC : VetKdApi = actor "aaaaa-aa";
   let LEDGER : Ledger = actor "ryjl3-tyaaa-aaaaa-aaaba-cai";
   let XRC : Xrc = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
-  let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
   let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
@@ -76,6 +75,7 @@ persistent actor Self {
   let ICP_TO_CYCLES_BUFFER_E8S : Nat = 10_000;
   let CMC_PRINCIPAL : Principal = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");
   let MINT_MEMO : Blob = Blob.fromArray([77, 73, 78, 84, 0, 0, 0, 0]); // "MINT\00\00\00\00"
+  let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
 
   // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
