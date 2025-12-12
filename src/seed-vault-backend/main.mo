@@ -97,7 +97,8 @@ persistent actor Self {
   };
 
   let IC : VetKdApi = actor "aaaaa-aa";
-  let LEDGER : Ledger = actor "ryjl3-tyaaa-aaaaa-aaaba-cai";
+  // Ledger actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
+  private func ledger() : Ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : Ledger;
   let XRC : Xrc = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
   let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
@@ -260,7 +261,7 @@ persistent actor Self {
     let selfPrincipal = Principal.fromActor(Self);
     let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
     let balance = try {
-      await LEDGER.icrc1_balance_of(defaultAccount)
+      await ledger().icrc1_balance_of(defaultAccount)
     } catch (e) {
       return #err("Unable to check canister balance: " # Error.message(e));
     };
@@ -280,7 +281,7 @@ persistent actor Self {
     };
 
     let transferResult = try {
-      await LEDGER.icrc1_transfer(transferArgs)
+      await ledger().icrc1_transfer(transferArgs)
     } catch (e) {
       return #err("Failed to transfer to CMC: " # Error.message(e));
     };
@@ -344,7 +345,7 @@ persistent actor Self {
     let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
 
     let balance = try {
-      await LEDGER.icrc1_balance_of(account)
+      await ledger().icrc1_balance_of(account)
     } catch (e) {
       return #err("Ledger unavailable: " # Error.message(e));
     };
@@ -353,7 +354,7 @@ persistent actor Self {
     };
 
     let transferResult = try {
-      await LEDGER.icrc1_transfer({
+      await ledger().icrc1_transfer({
         from_subaccount = ?callerSub;
         to = { owner = Principal.fromActor(Self); subaccount = null };
         amount = amount;
@@ -405,7 +406,7 @@ persistent actor Self {
     let callerSub = subaccount(caller);
     let account : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
     let balance = try {
-      await LEDGER.icrc1_balance_of(account)
+      await ledger().icrc1_balance_of(account)
     } catch (_) {
       0
     };
@@ -425,7 +426,7 @@ persistent actor Self {
     let callerSub = subaccount(caller);
     let userAccount : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
     let balance = try {
-      await LEDGER.icrc1_balance_of(userAccount)
+      await ledger().icrc1_balance_of(userAccount)
     } catch (e) {
       return #err("Ledger unavailable: " # Error.message(e));
     };
@@ -447,7 +448,7 @@ persistent actor Self {
     switch (principalRecipient) {
       case (?toPrincipal) {
         let transferResult = try {
-          await LEDGER.icrc1_transfer({
+          await ledger().icrc1_transfer({
             from_subaccount = ?callerSub;
             to = { owner = toPrincipal; subaccount = null };
             amount = amount;
@@ -476,7 +477,7 @@ persistent actor Self {
             let moveAmount = amount + ICP_TRANSFER_FEE;
 
             let internalTransfer = try {
-              await LEDGER.icrc1_transfer({
+              await ledger().icrc1_transfer({
                 from_subaccount = ?callerSub;
                 to = defaultAccount;
                 amount = moveAmount;
@@ -504,7 +505,7 @@ persistent actor Self {
               to = Blob.fromArray(toBytes);
             };
 
-            let legacyResult = try { await LEDGER.transfer(legacyArgs) } catch (e) {
+            let legacyResult = try { await ledger().transfer(legacyArgs) } catch (e) {
               return #err("Legacy transfer failed: " # Error.message(e));
             };
 
@@ -642,7 +643,7 @@ persistent actor Self {
     let selfPrincipal = Principal.fromActor(Self);
     let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
     let balance = try {
-      await LEDGER.icrc1_balance_of(defaultAccount)
+      await ledger().icrc1_balance_of(defaultAccount)
     } catch (e) {
       return #err("Ledger unavailable: " # Error.message(e));
     };
