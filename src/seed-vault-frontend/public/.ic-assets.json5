@@ -14,6 +14,16 @@
         // "disable_security_policy_warning": true,
 
         // Uncomment to redirect all requests from .raw.icp0.io to .icp0.io
-        // "allow_raw_access": false
+        // "allow_raw_access": false,
+
+        // Custom headers to allow required external scripts and clipboard access.
+        "headers": {
+            // Based on the ICP standard security policy with an allowance for the ad script source
+            // and frame usage that ad content may require.
+            "Content-Security-Policy": "default-src 'self'; connect-src *; img-src * data: blob:; font-src * data:; media-src * data: blob:; style-src * 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net; frame-src *;",
+
+            // Allow clipboard access explicitly while keeping the standard interest-cohort restriction.
+            "Permissions-Policy": "interest-cohort=(), clipboard-write=*, clipboard-read=*"
+        }
     },
 ]
