@@ -59,9 +59,35 @@ persistent actor Self {
     notify_mint_cycles : NotifyArg -> async ();
   };
 
+  // Cycles ledger (ICRC-1/2/3) minimal surface used for withdrawals.
+  type CyclesLedgerAccount = { owner : Principal; subaccount : ?[Nat8] };
+  type CyclesWithdrawArgs = {
+    amount : Nat;
+    from_subaccount : ?[Nat8];
+    to : Principal;
+    created_at_time : ?Nat64;
+  };
+  type CyclesWithdrawError = {
+    #GenericError : { message : Text; error_code : Nat };
+    #TemporarilyUnavailable;
+    #Duplicate : { duplicate_of : Nat };
+    #BadFee : { expected_fee : Nat };
+    #InvalidReceiver : { receiver : Principal };
+    #CreatedInFuture : { ledger_time : Nat64 };
+    #TooOld;
+    #InsufficientFunds : { balance : Nat };
+    #FailedToWithdraw : { rejection_code : {#NoError; #CanisterError; #SysTransient; #DestinationInvalid; #Unknown; #SysFatal; #CanisterReject}; rejection_reason : Text; fee_block : ?Nat };
+  };
+  type CyclesWithdrawResult = { #Ok : Nat; #Err : CyclesWithdrawError };
+  type CyclesLedger = actor {
+    icrc1_balance_of : CyclesLedgerAccount -> async Nat;
+    withdraw : CyclesWithdrawArgs -> async CyclesWithdrawResult;
+  };
+
   let IC : VetKdApi = actor "aaaaa-aa";
   let LEDGER : Ledger = actor "ryjl3-tyaaa-aaaaa-aaaba-cai";
   let XRC : Xrc = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
+  let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
   let DOMAIN_SEPARATOR : Blob = Text.encodeUtf8("seed-vault-app");
@@ -72,6 +98,8 @@ persistent actor Self {
   let ENCRYPT_CYCLE_COST : Nat = 30_000_000_000;
   let DECRYPT_CYCLE_COST : Nat = 30_000_000_000;
   let DERIVE_CYCLE_COST : Nat = 30_000_000_000;
+  // Withdraw fee on cycles ledger (100M cycles).
+  let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
   let ICP_TO_CYCLES_BUFFER_E8S : Nat = ICP_TRANSFER_FEE;
   let CMC_PRINCIPAL : Principal = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");
@@ -167,13 +195,13 @@ persistent actor Self {
     };
   };
 
-  // Convert collected ICP into cycles by sending ICP to the CMC and notifying it.
+  // Convert collected ICP into cycles by sending ICP to the CMC and notifying it,
+  // then withdrawing the minted cycles from the cycles ledger back into this canister.
   private func convertToCycles(amount : Nat) : async Result.Result<(), Text> {
     if (amount == 0) {
       return #ok(());
     };
 
-    let balanceBefore = ExperimentalCycles.balance();
     let selfPrincipal = Principal.fromActor(Self);
     let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
     let balance = try {
@@ -214,12 +242,41 @@ persistent actor Self {
         let notifyArgs : NotifyArg = { block_index = Nat64.fromNat(blockIndex) };
         try {
           await CMC.notify_mint_cycles(notifyArgs);
-          let balanceAfter = ExperimentalCycles.balance();
-          if (balanceAfter > balanceBefore) {
-            #ok(())
-          } else {
-            #err("CMC notify succeeded but cycles balance did not increase")
-          }
+
+          // Minted cycles land in the cycles ledger; withdraw them into this canister.
+          let ledgerAccount : CyclesLedgerAccount = { owner = selfPrincipal; subaccount = null };
+          let mintedBalance = try { await CYCLES_LEDGER.icrc1_balance_of(ledgerAccount) } catch (e) {
+            return #err("Cycles ledger unavailable: " # Error.message(e))
+          };
+
+          if (mintedBalance <= CYCLES_WITHDRAW_FEE) {
+            return #err("CMC notify succeeded but minted balance (" # Nat.toText(mintedBalance) # ") is not enough to withdraw")
+          };
+
+          let withdrawAmount = mintedBalance - CYCLES_WITHDRAW_FEE;
+          let beforeCycles = ExperimentalCycles.balance();
+          let withdrawResult = try {
+            await CYCLES_LEDGER.withdraw({
+              amount = withdrawAmount;
+              from_subaccount = null;
+              to = selfPrincipal;
+              created_at_time = null;
+            })
+          } catch (e) {
+            return #err("Cycles ledger withdraw failed: " # Error.message(e))
+          };
+
+          switch (withdrawResult) {
+            case (#Ok(_)) {
+              let afterCycles = ExperimentalCycles.balance();
+              if (afterCycles > beforeCycles) { #ok(()) } else {
+                #err("Cycles withdraw completed but canister cycles did not increase")
+              }
+            };
+            case (#Err(err)) {
+              #err("Cycles ledger withdraw error: " # debug_show(err))
+            };
+          };
         } catch (e) {
           #err("CMC notify failed: " # Error.message(e) # ". Cycles may not have been minted—check ledger.")
         };
