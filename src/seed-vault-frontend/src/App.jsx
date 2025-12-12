@@ -355,9 +355,6 @@ function App() {
         <div className="content">
           <section className="card">
             <h2>Billing & Funding</h2>
-            <p>
-              Your principal: <strong>{identity.getPrincipal().toText()}</strong>
-            </p>
             {accountDetails ? (
               <>
                 <div className="account-line">
@@ -386,10 +383,6 @@ function App() {
                 </p>
                 <p>
                   Canister cycles: <strong>{canisterCycles.toLocaleString()}</strong>
-                </p>
-                <p className="muted">
-                  (Canister: {accountDetails.canister} · Subaccount:{' '}
-                  <code>{toHex(accountDetails.subaccount)}</code>)
                 </p>
               </>
             ) : (
