@@ -37,13 +37,24 @@ persistent actor Self {
   type TransferResult = { #Ok : Nat; #Err : TransferError };
 
   // Legacy ICP ledger transfer (for 64-char account identifiers).
+  type LegacyTransferError = {
+    #BadFee : { expected_fee : { e8s : Nat64 } };
+    #InsufficientFunds : { balance : { e8s : Nat64 } };
+    #TxTooOld : { allowed_window_nanos : Nat64 };
+    #TxCreatedInFuture;
+    #TxDuplicate : { duplicate_of : Nat64 };
+  };
+
   type LegacyTransferArgs = {
     memo : Nat64;
     amount : { e8s : Nat64 };
     fee : { e8s : Nat64 };
     to : Blob;
+    from_subaccount : ?Blob;
+    created_at_time : ?{ timestamp_nanos : Nat64 };
   };
-  type LegacyTransferResult = { #ok : Nat64; #err : Text };
+
+  type LegacyTransferResult = { #Ok : Nat64; #Err : LegacyTransferError };
 
   type Ledger = actor {
     icrc1_balance_of : Account -> async Nat;
@@ -470,6 +481,8 @@ persistent actor Self {
           amount = { e8s = Nat64.fromNat(amount) };
           fee = { e8s = Nat64.fromNat(ICP_TRANSFER_FEE) };
           to = Blob.fromArray(toBytes);
+          from_subaccount = null;
+          created_at_time = null;
         };
 
         let legacyResult = try { await ledger().transfer(legacyArgs) } catch (e) {
@@ -477,8 +490,8 @@ persistent actor Self {
         };
 
         switch (legacyResult) {
-          case (#ok(block)) { #ok(Nat64.toNat(block)) };
-          case (#err(msg)) { #err(msg) };
+          case (#Ok(block)) { #ok(Nat64.toNat(block)) };
+          case (#Err(err)) { #err(debug_show(err)) };
         };
       };
       case null {
