@@ -431,87 +431,89 @@ persistent actor Self {
       return #err("Ledger unavailable: " # Error.message(e));
     };
 
-    let principalRecipient : ?Principal = try {
-      ?Principal.fromText(to_text)
-    } catch (_) { null };
+    // Prefer treating the input as a legacy account identifier first to avoid trapping on invalid principals.
+    let accountIdBytes = hexToBytes(Text.toUppercase(to_text));
+    switch (accountIdBytes) {
+      case (?toBytes) {
+        let required = amount + ICP_TRANSFER_FEE * 2;
+        if (balance < required) {
+          return #err("Insufficient balance to cover amount and fees");
+        };
 
-    let feeMultiplier : Nat = switch (principalRecipient) {
-      case (?_) { 1 };
-      case null { 2 };
-    };
+        let defaultAccount : Account = { owner = Principal.fromActor(Self); subaccount = null };
+        let moveAmount = amount + ICP_TRANSFER_FEE;
 
-    let required = amount + ICP_TRANSFER_FEE * feeMultiplier;
-    if (balance < required) {
-      return #err("Insufficient balance to cover amount and fees");
-    };
-
-    switch (principalRecipient) {
-      case (?toPrincipal) {
-        let transferResult = try {
+        let internalTransfer = try {
           await ledger().icrc1_transfer({
             from_subaccount = ?callerSub;
-            to = { owner = toPrincipal; subaccount = null };
-            amount = amount;
+            to = defaultAccount;
+            amount = moveAmount;
             fee = ?ICP_TRANSFER_FEE;
             memo = null;
             created_at_time = null;
           })
         } catch (e) {
-          return #err("Ledger transfer failed: " # Error.message(e));
+          return #err("Internal transfer failed: " # Error.message(e));
         };
 
-        switch (transferResult) {
-          case (#Ok(block)) { #ok(block) };
-          case (#Err(#InsufficientFunds)) { #err("Ledger reports insufficient funds") };
+        switch (internalTransfer) {
+          case (#Err(#InsufficientFunds)) { return #err("Internal transfer: insufficient funds") };
           case (#Err(#BadFee({ expected_fee }))) {
-            #err("Incorrect fee. Expected " # Nat.toText(expected_fee))
+            return #err("Internal transfer: incorrect fee. Expected " # Nat.toText(expected_fee))
           };
-          case (#Err(#GenericError({ message }))) { #err("Ledger error: " # message) };
+          case (#Err(#GenericError({ message }))) { return #err("Internal transfer error: " # message) };
+          case (#Ok(_)) {};
+        };
+
+        let legacyArgs : LegacyTransferArgs = {
+          memo = 0;
+          amount = { e8s = Nat64.fromNat(amount) };
+          fee = { e8s = Nat64.fromNat(ICP_TRANSFER_FEE) };
+          to = Blob.fromArray(toBytes);
+        };
+
+        let legacyResult = try { await ledger().transfer(legacyArgs) } catch (e) {
+          return #err("Legacy transfer failed: " # Error.message(e));
+        };
+
+        switch (legacyResult) {
+          case (#ok(block)) { #ok(Nat64.toNat(block)) };
+          case (#err(msg)) { #err(msg) };
         };
       };
       case null {
-        switch (hexToBytes(Text.toUppercase(to_text))) {
-          case null { return #err("Invalid recipient: must be a principal or 64-character account identifier") };
-          case (?toBytes) {
-            let defaultAccount : Account = { owner = Principal.fromActor(Self); subaccount = null };
-            let moveAmount = amount + ICP_TRANSFER_FEE;
+        let principalRecipient : ?Principal = try {
+          ?Principal.fromText(to_text)
+        } catch (_) { null };
 
-            let internalTransfer = try {
+        switch (principalRecipient) {
+          case null { return #err("Invalid recipient: must be a principal or 64-character account identifier") };
+          case (?toPrincipal) {
+            let required = amount + ICP_TRANSFER_FEE;
+            if (balance < required) {
+              return #err("Insufficient balance to cover amount and fees");
+            };
+
+            let transferResult = try {
               await ledger().icrc1_transfer({
                 from_subaccount = ?callerSub;
-                to = defaultAccount;
-                amount = moveAmount;
+                to = { owner = toPrincipal; subaccount = null };
+                amount = amount;
                 fee = ?ICP_TRANSFER_FEE;
                 memo = null;
                 created_at_time = null;
               })
             } catch (e) {
-              return #err("Internal transfer failed: " # Error.message(e));
+              return #err("Ledger transfer failed: " # Error.message(e));
             };
 
-            switch (internalTransfer) {
-              case (#Err(#InsufficientFunds)) { return #err("Internal transfer: insufficient funds") };
+            switch (transferResult) {
+              case (#Ok(block)) { #ok(block) };
+              case (#Err(#InsufficientFunds)) { #err("Ledger reports insufficient funds") };
               case (#Err(#BadFee({ expected_fee }))) {
-                return #err("Internal transfer: incorrect fee. Expected " # Nat.toText(expected_fee))
+                #err("Incorrect fee. Expected " # Nat.toText(expected_fee))
               };
-              case (#Err(#GenericError({ message }))) { return #err("Internal transfer error: " # message) };
-              case (#Ok(_)) {};
-            };
-
-            let legacyArgs : LegacyTransferArgs = {
-              memo = 0;
-              amount = { e8s = Nat64.fromNat(amount) };
-              fee = { e8s = Nat64.fromNat(ICP_TRANSFER_FEE) };
-              to = Blob.fromArray(toBytes);
-            };
-
-            let legacyResult = try { await ledger().transfer(legacyArgs) } catch (e) {
-              return #err("Legacy transfer failed: " # Error.message(e));
-            };
-
-            switch (legacyResult) {
-              case (#ok(block)) { #ok(Nat64.toNat(block)) };
-              case (#err(msg)) { #err(msg) };
+              case (#Err(#GenericError({ message }))) { #err("Ledger error: " # message) };
             };
           };
         };
