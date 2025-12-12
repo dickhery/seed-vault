@@ -173,6 +173,7 @@ persistent actor Self {
       return #ok(());
     };
 
+    let balanceBefore = ExperimentalCycles.balance();
     let selfPrincipal = Principal.fromActor(Self);
     let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
     let balance = try {
@@ -213,7 +214,12 @@ persistent actor Self {
         let notifyArgs : NotifyArg = { block_index = Nat64.fromNat(blockIndex) };
         try {
           await CMC.notify_mint_cycles(notifyArgs);
-          #ok(())
+          let balanceAfter = ExperimentalCycles.balance();
+          if (balanceAfter > balanceBefore) {
+            #ok(())
+          } else {
+            #err("CMC notify succeeded but cycles balance did not increase")
+          }
         } catch (e) {
           #err("CMC notify failed: " # Error.message(e) # ". Cycles may not have been minted—check ledger.")
         };
