@@ -92,6 +92,9 @@ function App() {
   const [decryptingSeeds, setDecryptingSeeds] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
+  const [recipient, setRecipient] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -125,6 +128,9 @@ function App() {
     setSeedNames([]);
     setDecryptedSeeds({});
     setAccountDetails(null);
+    setIsTransferOpen(false);
+    setRecipient('');
+    setTransferAmount('');
   }
 
   async function loadAccount() {
@@ -332,6 +338,45 @@ function App() {
     }
   }
 
+  async function handleTransfer(event) {
+    event.preventDefault();
+    if (!recipient || !transferAmount) return;
+
+    const amountNum = parseFloat(transferAmount);
+    if (Number.isNaN(amountNum) || amountNum <= 0) {
+      setStatus('Invalid amount');
+      return;
+    }
+
+    const amountE8s = Math.floor(amountNum * 1e8);
+    const isAccountId = recipient.length === 64 && /^[0-9A-Fa-f]+$/.test(recipient);
+    const feeMultiplier = isAccountId ? 2 : 1;
+    const totalE8s = amountE8s + feeMultiplier * LEDGER_FEE_E8S;
+
+    const confirmed = window.confirm(
+      `Transfer ${transferAmount} ICP to ${recipient}? Ledger fee: ${formatIcp(feeMultiplier * LEDGER_FEE_E8S)} ICP. Total deduction: ${formatIcp(totalE8s)} ICP.`,
+    );
+    if (!confirmed) return;
+
+    setLoading(true);
+    setStatus('Transferring...');
+    try {
+      const result = await backendActor.transfer_icp(recipient, amountE8s);
+      if ('err' in result) {
+        throw new Error(result.err);
+      }
+      setStatus(`Transfer successful. Block: ${result.ok}`);
+      await loadAccount();
+      setIsTransferOpen(false);
+      setRecipient('');
+      setTransferAmount('');
+    } catch (error) {
+      setStatus(`Transfer failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="app">
       <header>
@@ -393,6 +438,11 @@ function App() {
               Refresh balance & cycles
               {isRefreshing && <span className="loading-spinner" />}
             </button>
+            {!isTransferOpen && (
+              <button onClick={() => setIsTransferOpen(true)} disabled={loading}>
+                Transfer
+              </button>
+            )}
             {paymentPrompt && (
               <div className="callout">
                 <p>
@@ -404,6 +454,42 @@ function App() {
                   )}
                 </p>
                 <p className="muted">Waiting for funds to arrive...</p>
+              </div>
+            )}
+            {isTransferOpen && (
+              <div className="callout">
+                <h3>Transfer ICP</h3>
+                <form onSubmit={handleTransfer}>
+                  <label>
+                    Recipient (Principal ID or 64-char Account ID)
+                    <input
+                      required
+                      value={recipient}
+                      onChange={(e) => setRecipient(e.target.value.trim())}
+                      placeholder="aaaaa-aa or 64-hex account id"
+                    />
+                  </label>
+                  <label>
+                    Amount (ICP)
+                    <input
+                      required
+                      type="number"
+                      step="0.00000001"
+                      min="0.00000001"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      placeholder="0.1"
+                    />
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button type="submit" disabled={loading}>
+                      Send
+                    </button>
+                    <button type="button" onClick={() => setIsTransferOpen(false)} disabled={loading}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
               </div>
             )}
           </section>

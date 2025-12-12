@@ -1,10 +1,12 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
+import Char "mo:base/Char";
 import Error "mo:base/Error";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
 import Nat64 "mo:base/Nat64";
+import Nat32 "mo:base/Nat32";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
@@ -34,9 +36,19 @@ persistent actor Self {
   };
   type TransferResult = { #Ok : Nat; #Err : TransferError };
 
+  // Legacy ICP ledger transfer (for 64-char account identifiers).
+  type LegacyTransferArgs = {
+    memo : Nat64;
+    amount : { e8s : Nat64 };
+    fee : { e8s : Nat64 };
+    to : Blob;
+  };
+  type LegacyTransferResult = { #ok : Nat64; #err : Text };
+
   type Ledger = actor {
     icrc1_balance_of : Account -> async Nat;
     icrc1_transfer : TransferArg -> async TransferResult;
+    transfer : LegacyTransferArgs -> async LegacyTransferResult;
   };
 
   // XRC exchange rate types
@@ -163,6 +175,49 @@ persistent actor Self {
       }
     });
     Blob.fromArray(padded)
+  };
+
+  private func hexNibble(c : Char) : ?Nat8 {
+    let code = Char.toNat32(c);
+    if (code >= 48 and code <= 57) {
+      ?Nat8.fromNat(Nat32.toNat(code - 48))
+    } else if (code >= 65 and code <= 70) {
+      ?Nat8.fromNat(Nat32.toNat(code - 55))
+    } else if (code >= 97 and code <= 102) {
+      ?Nat8.fromNat(Nat32.toNat(code - 87))
+    } else {
+      null
+    }
+  };
+
+  private func hexToBytes(hex : Text) : ?[Nat8] {
+    let chars = Text.toArray(hex);
+    if (chars.size() != 64) {
+      return null;
+    };
+
+    let nibbles = Array.tabulate<Nat8>(chars.size(), func(i : Nat) : Nat8 {
+      switch (hexNibble(chars[i])) {
+        case null { 255 };
+        case (?v) { v };
+      }
+    });
+
+    var invalid = false;
+    var i : Nat = 0;
+    while (i < nibbles.size()) {
+      if (nibbles[i] == 255) { invalid := true };
+      i += 1;
+    };
+    if (invalid) {
+      return null;
+    };
+
+    ?Array.tabulate<Nat8>(32, func(j : Nat) : Nat8 {
+      let hi = nibbles[j * 2];
+      let lo = nibbles[j * 2 + 1];
+      (hi << 4) + lo
+    })
   };
 
   private func cyclesToIcp(cycles : Nat) : async Nat {
@@ -359,6 +414,107 @@ persistent actor Self {
       canister = Principal.toText(Principal.fromActor(Self));
       subaccount = callerSub;
       balance;
+    };
+  };
+
+  public shared ({ caller }) func transfer_icp(to_text : Text, amount : Nat) : async Result.Result<Nat, Text> {
+    if (amount == 0) {
+      return #err("Amount must be greater than zero");
+    };
+
+    let callerSub = subaccount(caller);
+    let userAccount : Account = { owner = Principal.fromActor(Self); subaccount = ?callerSub };
+    let balance = try {
+      await LEDGER.icrc1_balance_of(userAccount)
+    } catch (e) {
+      return #err("Ledger unavailable: " # Error.message(e));
+    };
+
+    let principalRecipient : ?Principal = try {
+      ?Principal.fromText(to_text)
+    } catch (_) { null };
+
+    let feeMultiplier : Nat = switch (principalRecipient) {
+      case (?_) { 1 };
+      case null { 2 };
+    };
+
+    let required = amount + ICP_TRANSFER_FEE * feeMultiplier;
+    if (balance < required) {
+      return #err("Insufficient balance to cover amount and fees");
+    };
+
+    switch (principalRecipient) {
+      case (?toPrincipal) {
+        let transferResult = try {
+          await LEDGER.icrc1_transfer({
+            from_subaccount = ?callerSub;
+            to = { owner = toPrincipal; subaccount = null };
+            amount = amount;
+            fee = ?ICP_TRANSFER_FEE;
+            memo = null;
+            created_at_time = null;
+          })
+        } catch (e) {
+          return #err("Ledger transfer failed: " # Error.message(e));
+        };
+
+        switch (transferResult) {
+          case (#Ok(block)) { #ok(block) };
+          case (#Err(#InsufficientFunds)) { #err("Ledger reports insufficient funds") };
+          case (#Err(#BadFee({ expected_fee }))) {
+            #err("Incorrect fee. Expected " # Nat.toText(expected_fee))
+          };
+          case (#Err(#GenericError({ message }))) { #err("Ledger error: " # message) };
+        };
+      };
+      case null {
+        switch (hexToBytes(Text.toUppercase(to_text))) {
+          case null { return #err("Invalid recipient: must be a principal or 64-character account identifier") };
+          case (?toBytes) {
+            let defaultAccount : Account = { owner = Principal.fromActor(Self); subaccount = null };
+            let moveAmount = amount + ICP_TRANSFER_FEE;
+
+            let internalTransfer = try {
+              await LEDGER.icrc1_transfer({
+                from_subaccount = ?callerSub;
+                to = defaultAccount;
+                amount = moveAmount;
+                fee = ?ICP_TRANSFER_FEE;
+                memo = null;
+                created_at_time = null;
+              })
+            } catch (e) {
+              return #err("Internal transfer failed: " # Error.message(e));
+            };
+
+            switch (internalTransfer) {
+              case (#Err(#InsufficientFunds)) { return #err("Internal transfer: insufficient funds") };
+              case (#Err(#BadFee({ expected_fee }))) {
+                return #err("Internal transfer: incorrect fee. Expected " # Nat.toText(expected_fee))
+              };
+              case (#Err(#GenericError({ message }))) { return #err("Internal transfer error: " # message) };
+              case (#Ok(_)) {};
+            };
+
+            let legacyArgs : LegacyTransferArgs = {
+              memo = 0;
+              amount = { e8s = Nat64.fromNat(amount) };
+              fee = { e8s = Nat64.fromNat(ICP_TRANSFER_FEE) };
+              to = Blob.fromArray(toBytes);
+            };
+
+            let legacyResult = try { await LEDGER.transfer(legacyArgs) } catch (e) {
+              return #err("Legacy transfer failed: " # Error.message(e));
+            };
+
+            switch (legacyResult) {
+              case (#ok(block)) { #ok(Nat64.toNat(block)) };
+              case (#err(msg)) { #err(msg) };
+            };
+          };
+        };
+      };
     };
   };
 
