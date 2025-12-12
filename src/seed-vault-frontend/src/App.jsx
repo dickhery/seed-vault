@@ -77,6 +77,19 @@ function computeAccountId(canisterPrincipal, subaccountBytes) {
   return toHex(accountId).toUpperCase();
 }
 
+function isValidPrincipal(text) {
+  try {
+    Principal.fromText(text);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isValidAccountId(text) {
+  return text.length === 64 && /^[0-9A-Fa-f]+$/.test(text);
+}
+
 function App() {
   const [identity, setIdentity] = useState(null);
   const [seedNames, setSeedNames] = useState([]);
@@ -349,9 +362,22 @@ function App() {
     }
 
     const amountE8s = Math.floor(amountNum * 1e8);
-    const isAccountId = recipient.length === 64 && /^[0-9A-Fa-f]+$/.test(recipient);
+    const upperRecipient = recipient.toUpperCase();
+    const isAccountId = isValidAccountId(upperRecipient);
+    const isPid = isValidPrincipal(recipient);
+
+    if (!isAccountId && !isPid) {
+      setStatus('Invalid recipient: must be a Principal ID or 64-hex account ID');
+      return;
+    }
+
     const feeMultiplier = isAccountId ? 2 : 1;
     const totalE8s = amountE8s + feeMultiplier * LEDGER_FEE_E8S;
+
+    if (accountDetails && Number(accountDetails.balance) < totalE8s) {
+      setStatus(`Insufficient balance: need at least ${formatIcp(totalE8s)} ICP (including fees)`);
+      return;
+    }
 
     const confirmed = window.confirm(
       `Transfer ${transferAmount} ICP to ${recipient}? Ledger fee: ${formatIcp(feeMultiplier * LEDGER_FEE_E8S)} ICP. Total deduction: ${formatIcp(totalE8s)} ICP.`,
@@ -366,6 +392,12 @@ function App() {
         throw new Error(result.err);
       }
       setStatus(`Transfer successful. Block: ${result.ok}`);
+      try {
+        await navigator.clipboard.writeText(String(result.ok));
+        setStatus(`Transfer successful. Block: ${result.ok} (copied)`);
+      } catch (_) {
+        // Clipboard access can fail in some browsers; ignore.
+      }
       await loadAccount();
       setIsTransferOpen(false);
       setRecipient('');
@@ -439,7 +471,13 @@ function App() {
               {isRefreshing && <span className="loading-spinner" />}
             </button>
             {!isTransferOpen && (
-              <button onClick={() => setIsTransferOpen(true)} disabled={loading}>
+              <button
+                onClick={() => {
+                  setIsTransferOpen(true);
+                  loadAccount();
+                }}
+                disabled={loading}
+              >
                 Transfer
               </button>
             )}
@@ -482,10 +520,19 @@ function App() {
                     />
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button type="submit" disabled={loading}>
+                    <button type="submit" disabled={loading || !recipient || !transferAmount}>
                       Send
                     </button>
-                    <button type="button" onClick={() => setIsTransferOpen(false)} disabled={loading}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsTransferOpen(false);
+                        setRecipient('');
+                        setTransferAmount('');
+                        setStatus('');
+                      }}
+                      disabled={loading}
+                    >
                       Cancel
                     </button>
                   </div>
