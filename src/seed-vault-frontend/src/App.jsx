@@ -134,12 +134,10 @@ function App() {
     }
   }
 
-  async function ensureFunds(operation, count) {
-    const { icp_e8s } = await backendActor.estimate_cost(operation, count);
-    const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+  async function waitForBalance(required, message) {
     setPaymentPrompt({
-      operation,
       required,
+      message,
     });
 
     let checks = 0;
@@ -244,8 +242,10 @@ function App() {
       }
 
       setLoading(true);
-      await ensureFunds('decrypt', 1);
-      await ensureFunds('derive', 1);
+      await waitForBalance(
+        required,
+        `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
+      );
       const result = await backendActor.get_seed_cipher(seedName);
       if ('err' in result) {
         throw new Error(result.err);
@@ -255,6 +255,8 @@ function App() {
       const phraseText = await decrypt(cipher, key, iv);
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
       await loadAccount();
+
+      backendActor.convert_collected_icp?.().catch(() => {});
     } catch (error) {
       setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
     } finally {
@@ -280,8 +282,10 @@ function App() {
 
       setStatus('Encrypting and saving seed...');
       setLoading(true);
-      await ensureFunds('encrypt', 1);
-      await ensureFunds('derive', 1);
+      await waitForBalance(
+        required,
+        `Please transfer at least ${formatIcp(required)} ICP for encryption and key derivation.`,
+      );
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
       const result = await backendActor.add_seed(name, cipher, iv);
@@ -294,6 +298,8 @@ function App() {
       await loadSeeds();
       await loadAccount();
       setStatus('Seed saved');
+
+      backendActor.convert_collected_icp?.().catch(() => {});
     } catch (error) {
       setStatus(`Failed to save seed: ${error.message}`);
     } finally {
@@ -353,8 +359,12 @@ function App() {
             {paymentPrompt && (
               <div className="callout">
                 <p>
-                  Please transfer at least <strong>{formatIcp(paymentPrompt.required)} ICP</strong> to
-                  the account above to pay for {paymentPrompt.operation} costs.
+                  {paymentPrompt.message || (
+                    <>
+                      Please transfer at least <strong>{formatIcp(paymentPrompt.required)} ICP</strong> to
+                      the account above.
+                    </>
+                  )}
                 </p>
                 <p className="muted">Waiting for funds to arrive...</p>
               </div>

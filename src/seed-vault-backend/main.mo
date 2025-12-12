@@ -404,10 +404,7 @@ persistent actor Self {
     });
 
     let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    switch (await convertToCycles(amountToConvert)) {
-      case (#err(msg)) { throw Error.reject(msg) };
-      case (#ok(())) {};
-    };
+    ignore convertToCycles(amountToConvert);
     encrypted_key;
   };
 
@@ -424,10 +421,7 @@ persistent actor Self {
       case (#ok(_)) {};
     };
     let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    switch (await convertToCycles(amountToConvert)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok(())) {};
-    };
+    ignore convertToCycles(amountToConvert);
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwner[idx];
@@ -461,10 +455,7 @@ persistent actor Self {
       case (#ok(_)) {};
     };
     let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    switch (await convertToCycles(amountToConvert)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok(())) {};
-    };
+    ignore convertToCycles(amountToConvert);
 
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
@@ -487,5 +478,23 @@ persistent actor Self {
 
   public query func canister_cycles() : async Nat {
     ExperimentalCycles.balance()
+  };
+
+  // Allow anyone to trigger conversion of accumulated ICP in the default account into cycles
+  // without blocking user-facing calls.
+  public shared func convert_collected_icp() : async Result.Result<(), Text> {
+    let selfPrincipal = Principal.fromActor(Self);
+    let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
+    let balance = try {
+      await LEDGER.icrc1_balance_of(defaultAccount)
+    } catch (e) {
+      return #err("Ledger unavailable: " # Error.message(e));
+    };
+
+    if (balance <= ICP_TRANSFER_FEE) {
+      return #err("Insufficient ICP to convert after reserving transfer fee");
+    };
+
+    await convertToCycles(balance - ICP_TRANSFER_FEE);
   };
 };
