@@ -86,6 +86,7 @@ function App() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [accountDetails, setAccountDetails] = useState(null);
+  const [canisterCycles, setCanisterCycles] = useState(0);
   const [paymentPrompt, setPaymentPrompt] = useState(null);
 
   const backendActor = useMemo(() => {
@@ -126,6 +127,8 @@ function App() {
     try {
       const details = await backendActor.get_account_details();
       setAccountDetails(details);
+      const cycles = await backendActor.canister_cycles();
+      setCanisterCycles(Number(cycles));
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
     }
@@ -227,10 +230,14 @@ function App() {
 
   async function decryptSeed(seedName) {
     try {
-      const { icp_e8s } = await backendActor.estimate_cost('decrypt', 1);
-      const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+      const [decryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('decrypt', 1),
+        backendActor.estimate_cost('derive', 1),
+      ]);
+
+      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fee). Continue?`,
+        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
       );
       if (!confirmed) {
         return;
@@ -238,6 +245,7 @@ function App() {
 
       setLoading(true);
       await ensureFunds('decrypt', 1);
+      await ensureFunds('derive', 1);
       const result = await backendActor.get_seed_cipher(seedName);
       if ('err' in result) {
         throw new Error(result.err);
@@ -246,6 +254,7 @@ function App() {
       const key = await deriveSymmetricKey(seedName);
       const phraseText = await decrypt(cipher, key, iv);
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
+      await loadAccount();
     } catch (error) {
       setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
     } finally {
@@ -257,10 +266,13 @@ function App() {
     event.preventDefault();
     if (!name || !phrase) return;
     try {
-      const { icp_e8s } = await backendActor.estimate_cost('encrypt', 1);
-      const required = Number(icp_e8s) + LEDGER_FEE_E8S;
+      const [encryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('encrypt', 1),
+        backendActor.estimate_cost('derive', 1),
+      ]);
+      const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fee). Continue?`,
+        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
       );
       if (!confirmed) {
         return;
@@ -269,6 +281,7 @@ function App() {
       setStatus('Encrypting and saving seed...');
       setLoading(true);
       await ensureFunds('encrypt', 1);
+      await ensureFunds('derive', 1);
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
       const result = await backendActor.add_seed(name, cipher, iv);
@@ -279,6 +292,7 @@ function App() {
       setName('');
       setPhrase('');
       await loadSeeds();
+      await loadAccount();
       setStatus('Seed saved');
     } catch (error) {
       setStatus(`Failed to save seed: ${error.message}`);
@@ -323,6 +337,9 @@ function App() {
                   Available balance for this app:{' '}
                   <strong>{formatIcp(accountDetails.balance)} ICP</strong>
                 </p>
+                <p>
+                  Canister cycles: <strong>{canisterCycles.toLocaleString()}</strong>
+                </p>
                 <p className="muted">
                   (Canister: {accountDetails.canister} · Subaccount:{' '}
                   <code>{toHex(accountDetails.subaccount)}</code>)
@@ -332,6 +349,7 @@ function App() {
               <p className="muted">Loading account details...</p>
             )}
             <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
+            <button onClick={loadAccount} disabled={loading}>Refresh balance & cycles</button>
             {paymentPrompt && (
               <div className="callout">
                 <p>
