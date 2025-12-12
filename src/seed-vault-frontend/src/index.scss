@@ -169,3 +169,62 @@ textarea {
   color: #cbd5e1;
   word-break: break-word;
 }
+
+.account-line {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.account-id-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.account-id {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.copy-button {
+  background: #1f2e45;
+  border: none;
+  color: #fff;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s ease;
+}
+
+.copy-button:hover {
+  background: #2a3f5e;
+}
+
+.copy-button.copied {
+  background: #22c55e;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  border-top-color: transparent;
+  animation: spin 1s linear infinite;
+  margin-left: 0.5rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.button-loading {
+  opacity: 0.7;
+  cursor: progress;
+}
