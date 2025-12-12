@@ -88,6 +88,10 @@ function App() {
   const [accountDetails, setAccountDetails] = useState(null);
   const [canisterCycles, setCanisterCycles] = useState(0);
   const [paymentPrompt, setPaymentPrompt] = useState(null);
+  const [isAddingSeed, setIsAddingSeed] = useState(false);
+  const [decryptingSeeds, setDecryptingSeeds] = useState({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -124,6 +128,7 @@ function App() {
   }
 
   async function loadAccount() {
+    setIsRefreshing(true);
     try {
       const details = await backendActor.get_account_details();
       setAccountDetails(details);
@@ -131,6 +136,8 @@ function App() {
       setCanisterCycles(Number(cycles));
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
+    } finally {
+      setIsRefreshing(false);
     }
   }
 
@@ -140,18 +147,22 @@ function App() {
       message,
     });
 
+    setStatus('Awaiting payment...');
+
     let checks = 0;
     while (checks < 12) {
       const details = await backendActor.get_account_details();
       setAccountDetails(details);
       if (Number(details.balance) >= required) {
         setPaymentPrompt(null);
+        setStatus('Payment received. Proceeding...');
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 5000));
       checks += 1;
     }
     setPaymentPrompt(null);
+    setStatus('Payment timeout.');
     throw new Error('Insufficient funds to cover cycle costs.');
   }
 
@@ -227,6 +238,8 @@ function App() {
   }
 
   async function decryptSeed(seedName) {
+    setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
+    setStatus(`Preparing to decrypt "${seedName}"...`);
     try {
       const [decryptEstimate, deriveEstimate] = await Promise.all([
         backendActor.estimate_cost('decrypt', 1),
@@ -238,14 +251,18 @@ function App() {
         `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
       );
       if (!confirmed) {
+        setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
+        setStatus('');
         return;
       }
 
       setLoading(true);
+      setStatus(`Attempting payment for decryption of "${seedName}"...`);
       await waitForBalance(
         required,
         `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
       );
+      setStatus(`Decrypting "${seedName}"...`);
       const result = await backendActor.get_seed_cipher(seedName);
       if ('err' in result) {
         throw new Error(result.err);
@@ -257,9 +274,11 @@ function App() {
       await loadAccount();
 
       backendActor.convert_collected_icp?.().catch(() => {});
+      setStatus(`"${seedName}" decrypted successfully.`);
     } catch (error) {
       setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
     } finally {
+      setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
     }
   }
@@ -267,6 +286,8 @@ function App() {
   async function handleAddSeed(event) {
     event.preventDefault();
     if (!name || !phrase) return;
+    setIsAddingSeed(true);
+    setStatus('Preparing to save seed...');
     try {
       const [encryptEstimate, deriveEstimate] = await Promise.all([
         backendActor.estimate_cost('encrypt', 1),
@@ -277,15 +298,18 @@ function App() {
         `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
       );
       if (!confirmed) {
+        setIsAddingSeed(false);
+        setStatus('');
         return;
       }
 
-      setStatus('Encrypting and saving seed...');
+      setStatus('Attempting payment for encryption...');
       setLoading(true);
       await waitForBalance(
         required,
         `Please transfer at least ${formatIcp(required)} ICP for encryption and key derivation.`,
       );
+      setStatus(`Encrypting and saving "${name}"...`);
       const key = await deriveSymmetricKey(name);
       const { cipher, iv } = await encrypt(phrase, key);
       const result = await backendActor.add_seed(name, cipher, iv);
@@ -303,6 +327,7 @@ function App() {
     } catch (error) {
       setStatus(`Failed to save seed: ${error.message}`);
     } finally {
+      setIsAddingSeed(false);
       setLoading(false);
     }
   }
@@ -335,10 +360,26 @@ function App() {
             </p>
             {accountDetails ? (
               <>
-                <p>
-                  Deposit ICP to Account ID:{' '}
-                  <strong>{computeAccountId(accountDetails.canister, accountDetails.subaccount)}</strong>
-                </p>
+                <div className="account-line">
+                  <p>Deposit ICP to Account ID:</p>
+                  <div className="account-id-container">
+                    <strong className="account-id">
+                      {computeAccountId(accountDetails.canister, accountDetails.subaccount)}
+                    </strong>
+                    <button
+                      type="button"
+                      className={`copy-button ${copyStatus === 'Copied!' ? 'copied' : ''}`}
+                      onClick={async () => {
+                        const id = computeAccountId(accountDetails.canister, accountDetails.subaccount);
+                        await navigator.clipboard.writeText(id);
+                        setCopyStatus('Copied!');
+                        setTimeout(() => setCopyStatus(''), 2000);
+                      }}
+                    >
+                      {copyStatus || 'Copy'}
+                    </button>
+                  </div>
+                </div>
                 <p>
                   Available balance for this app:{' '}
                   <strong>{formatIcp(accountDetails.balance)} ICP</strong>
@@ -355,7 +396,10 @@ function App() {
               <p className="muted">Loading account details...</p>
             )}
             <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
-            <button onClick={loadAccount} disabled={loading}>Refresh balance & cycles</button>
+            <button onClick={loadAccount} disabled={isRefreshing || loading} className={isRefreshing ? 'button-loading' : ''}>
+              Refresh balance & cycles
+              {isRefreshing && <span className="loading-spinner" />}
+            </button>
             {paymentPrompt && (
               <div className="callout">
                 <p>
@@ -392,8 +436,13 @@ function App() {
                   placeholder="twelve random words..."
                 />
               </label>
-              <button type="submit" disabled={!name || !phrase || loading}>
+              <button
+                type="submit"
+                disabled={!name || !phrase || isAddingSeed || loading}
+                className={isAddingSeed ? 'button-loading' : ''}
+              >
                 Save encrypted seed
+                {isAddingSeed && <span className="loading-spinner" />}
               </button>
             </form>
             {status && <p className="status">{status}</p>}
@@ -417,8 +466,13 @@ function App() {
                         )}
                       </div>
                       {!decryptedSeeds[seedName] && (
-                        <button onClick={() => decryptSeed(seedName)} disabled={loading}>
+                        <button
+                          onClick={() => decryptSeed(seedName)}
+                          disabled={decryptingSeeds[seedName] || loading}
+                          className={decryptingSeeds[seedName] ? 'button-loading' : ''}
+                        >
                           Decrypt
+                          {decryptingSeeds[seedName] && <span className="loading-spinner" />}
                         </button>
                       )}
                     </div>
