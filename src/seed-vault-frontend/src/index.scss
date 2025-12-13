@@ -222,6 +222,22 @@ textarea {
   background: #22c55e;
 }
 
+.hide-button {
+  background: #1f2e45;
+  border: none;
+  color: #fff;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s ease;
+  margin-right: 0.4rem;
+}
+
+.hide-button:hover {
+  background: #2a3f5e;
+}
+
 .loading-spinner {
   display: inline-block;
   width: 1rem;

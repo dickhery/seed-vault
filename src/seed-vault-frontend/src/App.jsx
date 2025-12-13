@@ -111,6 +111,7 @@ function App() {
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
+  const [hiddenSeeds, setHiddenSeeds] = useState({});
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -124,6 +125,16 @@ function App() {
       loadAccount();
       loadSeeds();
     }
+  }, [identity, backendActor]);
+
+  useEffect(() => {
+    if (!identity) return undefined;
+
+    const interval = setInterval(() => {
+      loadAccount();
+    }, 300000);
+
+    return () => clearInterval(interval);
   }, [identity, backendActor]);
 
   async function login() {
@@ -265,6 +276,15 @@ function App() {
         });
         return retained;
       });
+      setHiddenSeeds((current) => {
+        const retained = {};
+        names.forEach((seedName) => {
+          if (seedName in current) {
+            retained[seedName] = current[seedName];
+          }
+        });
+        return retained;
+      });
     } catch (error) {
       setStatus(`Failed to load seeds: ${error.message}`);
     } finally {
@@ -336,6 +356,7 @@ function App() {
 
       const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
+      setHiddenSeeds((prev) => ({ ...prev, [seedName]: false }));
       await loadAccount();
 
       backendActor.convert_collected_icp?.().catch(() => {});
@@ -368,6 +389,12 @@ function App() {
         delete updated[seedName];
         return updated;
       });
+      setHiddenSeeds((prev) => {
+        const updated = { ...prev };
+        delete updated[seedName];
+        return updated;
+      });
+      await loadAccount();
       setStatus(`"${seedName}" deleted.`);
     } catch (error) {
       setStatus(`Failed to delete "${seedName}": ${error.message}`);
@@ -680,7 +707,18 @@ function App() {
                         <p className="seed-name">{seedName}</p>
                         {decryptedSeeds[seedName] && (
                           <>
-                            <p className="seed-phrase">{decryptedSeeds[seedName]}</p>
+                            <p className="seed-phrase">
+                              {hiddenSeeds[seedName] ? '••••••••••••••••••••••••••' : decryptedSeeds[seedName]}
+                            </p>
+                            <button
+                              type="button"
+                              className="hide-button"
+                              onClick={() =>
+                                setHiddenSeeds((prev) => ({ ...prev, [seedName]: !prev[seedName] }))
+                              }
+                            >
+                              {hiddenSeeds[seedName] ? 'Show' : 'Hide'}
+                            </button>
                             <button
                               type="button"
                               className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
