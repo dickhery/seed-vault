@@ -120,7 +120,6 @@ persistent actor Self {
 
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
-  let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
   let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
@@ -140,8 +139,6 @@ persistent actor Self {
 
   // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
-  // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
-  stable var last_xdr_per_icp_rate : Nat = 0;
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
     var i : Nat = 0;
@@ -252,20 +249,20 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
       timestamp = null;
     };
-    let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
     ExperimentalCycles.add(XRC_CALL_CYCLES);
-    let rateResult = try { await XRC.get_exchange_rate(request) } catch (_) { #Err("xrc unavailable") };
-    let rateNat : Nat = switch (rateResult) {
-      case (#Ok({ rate })) {
-        let r = Nat64.toNat(rate);
-        last_xdr_per_icp_rate := r;
-        r
-      };
-      case (#Err(_)) {
-        if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate }
-      };
+    let rateResult = try {
+      await XRC.get_exchange_rate(request)
+    } catch (e) {
+      throw Error.reject("XRC unavailable: " # Error.message(e));
     };
-    let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
+    let rateNat : Nat = switch (rateResult) {
+      case (#Ok({ rate })) { Nat64.toNat(rate) };
+      case (#Err(msg)) { throw Error.reject("XRC returned error: " # msg) };
+    };
+    if (rateNat == 0) {
+      throw Error.reject("XRC returned zero rate");
+    };
+    let effectiveRate = rateNat;
     let numerator : Nat = cycles * 100_000;
     let baseCost = numerator / effectiveRate;
     // Add a ~5% buffer to account for execution and rounding without meaningfully
