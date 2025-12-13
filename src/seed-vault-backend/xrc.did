@@ -1,0 +1,11 @@
+type AssetClass = variant { Cryptocurrency; FiatCurrency };
+type Asset = record { class : AssetClass; symbol : text };
+type GetExchangeRateRequest = record {
+  base_asset : Asset;
+  quote_asset : Asset;
+  timestamp : opt nat64;
+};
+type GetExchangeRateResult = variant { Ok : record { rate : nat64 }; Err : text };
+service : {
+  get_exchange_rate : (GetExchangeRateRequest) -> (GetExchangeRateResult) query;
+}

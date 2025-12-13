@@ -10,6 +10,7 @@ import Nat32 "mo:base/Nat32";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Xrc "./xrc.did";
 
 persistent actor Self {
   // Type definitions for vetKD interactions
@@ -62,16 +63,13 @@ persistent actor Self {
     transfer : LegacyTransferArgs -> async LegacyTransferResult;
   };
 
-  // XRC exchange rate types
-  // Use a backticked identifier to preserve the required Candid field name `class`.
-  type XrcAsset = { symbol : Text; `class` : { #Cryptocurrency; #FiatCurrency } };
-  type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
-  type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
-  type Xrc = actor {
-    // XRC exposes `get_exchange_rate` as a query method; declaring it as such here
-    // ensures calls succeed instead of being rejected as updates.
-    get_exchange_rate : shared query (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
-  };
+  // XRC exchange rate types imported from a dedicated .did file, which automatically
+  // escapes reserved identifiers (like "class") for Motoko while preserving the
+  // correct Candid field names when serialized over the wire.
+  type XrcAsset = Xrc.Asset;
+  type XrcGetExchangeRateRequest = Xrc.GetExchangeRateRequest;
+  type XrcGetExchangeRateResult = Xrc.GetExchangeRateResult;
+  type Xrc = Xrc.Service;
 
   // Call the management canister directly for vetKD.
   type VetKdApi = actor {
@@ -244,11 +242,11 @@ persistent actor Self {
       return 0;
     };
 
-    let request : XrcGetExchangeRateRequest = {
-      base_asset = { symbol = "ICP"; `class` = #Cryptocurrency };
-      quote_asset = { symbol = "XDR"; `class` = #FiatCurrency };
-      timestamp = null;
-    };
+      let request : XrcGetExchangeRateRequest = {
+        base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
+        quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
+        timestamp = null;
+      };
     ExperimentalCycles.add(XRC_CALL_CYCLES);
     let rateResult = try {
       await XRC.get_exchange_rate(request)
