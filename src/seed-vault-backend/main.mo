@@ -123,6 +123,7 @@ persistent actor Self {
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
+  let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
   // Adjusted derive estimate so the single transaction covers typical vetKD
   // derivation plus execution with a modest cushion while trimming the
   // user-facing ICP bill toward ~0.025 ICP per operation (~15% drop from
@@ -252,6 +253,7 @@ persistent actor Self {
       timestamp = null;
     };
     let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
+    ExperimentalCycles.add(XRC_CALL_CYCLES);
     let rateResult = try { await XRC.get_exchange_rate(request) } catch (_) { #Err("xrc unavailable") };
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
