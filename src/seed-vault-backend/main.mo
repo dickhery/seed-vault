@@ -63,8 +63,8 @@ persistent actor Self {
   };
 
   // XRC exchange rate types
-  // Use `asset_class` to avoid the Motoko keyword `class`.
-  type XrcAsset = { symbol : Text; asset_class : { #Cryptocurrency; #FiatCurrency } };
+  // Use a backticked identifier to preserve the required Candid field name `class`.
+  type XrcAsset = { symbol : Text; `class` : { #Cryptocurrency; #FiatCurrency } };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
   type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
   type Xrc = actor {
@@ -245,8 +245,8 @@ persistent actor Self {
     };
 
     let request : XrcGetExchangeRateRequest = {
-      base_asset = { symbol = "ICP"; asset_class = #Cryptocurrency };
-      quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
+      base_asset = { symbol = "ICP"; `class` = #Cryptocurrency };
+      quote_asset = { symbol = "XDR"; `class` = #FiatCurrency };
       timestamp = null;
     };
     ExperimentalCycles.add(XRC_CALL_CYCLES);
