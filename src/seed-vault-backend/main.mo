@@ -2,6 +2,7 @@ import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Char "mo:base/Char";
 import Error "mo:base/Error";
+import Debug "mo:base/Debug";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
@@ -254,14 +255,19 @@ persistent actor Self {
     };
     let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
     ExperimentalCycles.add(XRC_CALL_CYCLES);
-    let rateResult = try { await XRC.get_exchange_rate(request) } catch (_) { #Err("xrc unavailable") };
+    let rateResult = try { await XRC.get_exchange_rate(request) } catch (e) {
+      Debug.print("XRC call failed: " # Error.message(e));
+      #Err("xrc unavailable")
+    };
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
         last_xdr_per_icp_rate := r;
+        Debug.print("XRC rate (XDR per ICP *1e9) used: " # Nat.toText(r));
         r
       };
       case (#Err(_)) {
+        Debug.print("Using cached/fallback XDR rate. Cached: " # Nat.toText(last_xdr_per_icp_rate));
         if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate }
       };
     };
