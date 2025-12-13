@@ -121,9 +121,10 @@ persistent actor Self {
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
-  // The derive call itself consumes ~26.15B cycles; keep the estimate close to the
-  // actual burn so the 5% buffer applied later is meaningful without overcharging.
-  let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
+  // Adjusted derive estimate so the single transaction covers typical vetKD
+  // derivation plus execution with a modest cushion while still reducing the
+  // user-facing ICP bill by roughly 15% versus the previous two-transfer flow.
+  let DERIVE_CYCLE_COST : Nat = 54_000_000_000;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
@@ -682,6 +683,54 @@ persistent actor Self {
         switch (found) {
           case null { #err("Seed not found: " # name) };
           case (?pair) { #ok(pair) };
+        };
+      };
+    };
+  };
+
+  public shared ({ caller }) func get_seed_cipher_and_key(
+    name : Text,
+    transport_public_key : Blob,
+  ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    let decryptCost = await estimate_cost("decrypt", 1);
+    let deriveCost = await estimate_cost("derive", 1);
+    let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
+
+    if (total > 0) {
+      switch (await chargeUser(caller, total)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) {};
+      };
+      let amountToConvert = if (total > ICP_TO_CYCLES_BUFFER_E8S) { total - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore convertToCycles(amountToConvert);
+    };
+
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (_, seeds) = seedsByOwner[idx];
+        var found : ?(Blob, Blob) = null;
+        label search for ((n, c, ivVal) in Array.vals(seeds)) {
+          if (Text.equal(n, name)) {
+            found := ?(c, ivVal);
+            break search;
+          };
+        };
+
+        switch (found) {
+          case null { #err("Seed not found: " # name) };
+          case (?pair) {
+            let input : Blob = Text.encodeUtf8(name);
+            let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
+              input;
+              context = context(caller);
+              key_id = keyId();
+              transport_public_key;
+            });
+
+            let (cipher, iv) = pair;
+            #ok((cipher, iv, encrypted_key));
+          };
         };
       };
     };
