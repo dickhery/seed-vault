@@ -106,6 +106,7 @@ function App() {
   const [deletingSeeds, setDeletingSeeds] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
+  const [estimatedCost, setEstimatedCost] = useState(null);
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
@@ -142,6 +143,7 @@ function App() {
     setSeedNames([]);
     setDecryptedSeeds({});
     setAccountDetails(null);
+    setEstimatedCost(null);
     setIsTransferOpen(false);
     setRecipient('');
     setTransferAmount('');
@@ -154,8 +156,12 @@ function App() {
       setAccountDetails(details);
       const cycles = await backendActor.canister_cycles();
       setCanisterCycles(Number(cycles));
+      const deriveEstimate = await backendActor.estimate_cost('derive', 1);
+      const totalE8s = Number(deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+      setEstimatedCost(formatIcp(totalE8s));
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
+      setEstimatedCost(null);
     } finally {
       setIsRefreshing(false);
     }
@@ -517,11 +523,19 @@ function App() {
                 <p>
                   Canister cycles: <strong>{canisterCycles.toLocaleString()}</strong>
                 </p>
+                <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
+                <p className="muted">
+                  Estimated cost per encrypt/decrypt: ~
+                  {estimatedCost ? `${estimatedCost} ICP` : 'loading...'}
+                </p>
+                <p className="muted">
+                  Pricing adjusts dynamically based on the current ICP/XDR exchange rate and may change
+                  frequently.
+                </p>
               </>
             ) : (
               <p className="muted">Loading account details...</p>
             )}
-            <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
             <button onClick={loadAccount} disabled={isRefreshing || loading} className={isRefreshing ? 'button-loading' : ''}>
               Refresh balance & cycles
               {isRefreshing && <span className="loading-spinner" />}
