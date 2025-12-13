@@ -112,6 +112,7 @@ function App() {
   const [recipient, setRecipient] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [hiddenSeeds, setHiddenSeeds] = useState({});
+  const [estimateTimestamp, setEstimateTimestamp] = useState(null);
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -134,7 +135,16 @@ function App() {
       loadAccount();
     }, 300000);
 
-    return () => clearInterval(interval);
+    const handleFocus = () => {
+      loadAccount();
+    };
+
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [identity, backendActor]);
 
   async function login() {
@@ -156,6 +166,7 @@ function App() {
     setDecryptedSeeds({});
     setAccountDetails(null);
     setEstimatedCosts(null);
+    setEstimateTimestamp(null);
     setCopyStatus('');
     setCopyStatuses({});
     setIsTransferOpen(false);
@@ -179,9 +190,11 @@ function App() {
         encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
         decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
       });
+      setEstimateTimestamp(Date.now());
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
       setEstimatedCosts(null);
+      setEstimateTimestamp(null);
     } finally {
       setIsRefreshing(false);
     }
@@ -577,6 +590,12 @@ function App() {
                   {estimatedCosts ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
                 </p>
                 <p className="muted">
+                  Last refreshed:{' '}
+                  {estimateTimestamp
+                    ? new Date(estimateTimestamp).toLocaleString()
+                    : 'not yet updated'}
+                </p>
+                <p className="muted">
                   Pricing adjusts dynamically based on the current ICP/XDR exchange rate and may change
                   frequently.
                 </p>
@@ -723,6 +742,11 @@ function App() {
                               type="button"
                               className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
                               onClick={async () => {
+                                if (hiddenSeeds[seedName]) {
+                                  setStatus('Reveal the seed phrase before copying.');
+                                  return;
+                                }
+
                                 try {
                                   await navigator.clipboard.writeText(decryptedSeeds[seedName]);
                                   setCopyStatuses((prev) => ({ ...prev, [seedName]: 'Copied!' }));
