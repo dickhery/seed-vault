@@ -119,9 +119,11 @@ persistent actor Self {
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
-  let ENCRYPT_CYCLE_COST : Nat = 30_000_000_000;
-  let DECRYPT_CYCLE_COST : Nat = 30_000_000_000;
-  let DERIVE_CYCLE_COST : Nat = 30_000_000_000;
+  let ENCRYPT_CYCLE_COST : Nat = 4_000_000_000;
+  let DECRYPT_CYCLE_COST : Nat = 4_000_000_000;
+  // The derive call itself consumes ~26.15B cycles; keep the estimate close to the
+  // actual burn so the 5% buffer applied later is meaningful without overcharging.
+  let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
@@ -247,7 +249,10 @@ persistent actor Self {
     let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
     let numerator : Nat = cycles * 100_000;
     let baseCost = numerator / effectiveRate;
-    baseCost + ICP_TO_CYCLES_BUFFER_E8S;
+    // Add a ~5% buffer to account for execution and rounding without meaningfully
+    // overcharging the caller.
+    let buffered = (baseCost * 105) / 100;
+    buffered + ICP_TO_CYCLES_BUFFER_E8S;
   };
 
   private func operationCycles(operation : Text, count : Nat) : Nat {

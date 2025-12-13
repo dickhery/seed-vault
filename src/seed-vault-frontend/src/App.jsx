@@ -268,7 +268,7 @@ function App() {
 
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
+        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fees and 5% buffer). Continue?`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
@@ -344,7 +344,7 @@ function App() {
       ]);
       const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
+        `Saving "${name}" will cost ~${formatIcp(required)} ICP (including ledger fees and 5% buffer). Continue?`,
       );
       if (!confirmed) {
         setIsAddingSeed(false);
