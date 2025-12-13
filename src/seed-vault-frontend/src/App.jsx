@@ -7,6 +7,7 @@ import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/
 
 const II_URL = 'https://identity.ic0.app';
 const LEDGER_FEE_E8S = 10_000;
+const MAX_SEED_CHARS = 420;
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -420,6 +421,10 @@ function App() {
   async function handleAddSeed(event) {
     event.preventDefault();
     if (!name || !phrase) return;
+    if (phrase.length > MAX_SEED_CHARS) {
+      setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
+      return;
+    }
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
     try {
@@ -694,10 +699,12 @@ function App() {
                 Seed phrase
                 <textarea
                   required
+                  maxLength={MAX_SEED_CHARS}
                   value={phrase}
                   onChange={(e) => setPhrase(e.target.value)}
                   placeholder="twelve random words..."
                 />
+                <p className="muted">{phrase.length}/{MAX_SEED_CHARS} characters</p>
               </label>
               <button
                 type="submit"

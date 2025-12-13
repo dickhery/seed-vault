@@ -122,6 +122,10 @@ persistent actor Self {
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
+  // 420 UTF-8 characters can expand to ~1680 bytes in the worst case; AES-GCM adds
+  // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
+  // even if the frontend is bypassed.
+  let MAX_SEED_CIPHER_BYTES : Nat = 2_048;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
   let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
@@ -616,6 +620,9 @@ persistent actor Self {
     };
     if (Blob.toArray(cipher).size() == 0) {
       return #err("Ciphertext cannot be empty");
+    };
+    if (Blob.toArray(cipher).size() > MAX_SEED_CIPHER_BYTES) {
+      return #err("Seed phrase too long. Limit is 420 characters.");
     };
     let { icp_e8s } = await estimate_cost("encrypt", 1);
     if (icp_e8s > 0) {
