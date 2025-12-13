@@ -119,8 +119,8 @@ persistent actor Self {
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
-  let ENCRYPT_CYCLE_COST : Nat = 4_000_000_000;
-  let DECRYPT_CYCLE_COST : Nat = 4_000_000_000;
+  let ENCRYPT_CYCLE_COST : Nat = 0;
+  let DECRYPT_CYCLE_COST : Nat = 0;
   // The derive call itself consumes ~26.15B cycles; keep the estimate close to the
   // actual burn so the 5% buffer applied later is meaningful without overcharging.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
@@ -235,6 +235,10 @@ persistent actor Self {
   };
 
   private func cyclesToIcp(cycles : Nat) : async Nat {
+    if (cycles == 0) {
+      return 0;
+    };
+
     let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; asset_class = #Cryptocurrency };
       quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
@@ -593,12 +597,14 @@ persistent actor Self {
       return #err("Ciphertext cannot be empty");
     };
     let { icp_e8s } = await estimate_cost("encrypt", 1);
-    switch (await chargeUser(caller, icp_e8s)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok(_)) {};
+    if (icp_e8s > 0) {
+      switch (await chargeUser(caller, icp_e8s)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) {};
+      };
+      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore convertToCycles(amountToConvert);
     };
-    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    ignore convertToCycles(amountToConvert);
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwner[idx];
@@ -653,12 +659,14 @@ persistent actor Self {
 
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
     let { icp_e8s } = await estimate_cost("decrypt", 1);
-    switch (await chargeUser(caller, icp_e8s)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok(_)) {};
+    if (icp_e8s > 0) {
+      switch (await chargeUser(caller, icp_e8s)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) {};
+      };
+      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore convertToCycles(amountToConvert);
     };
-    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    ignore convertToCycles(amountToConvert);
 
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
