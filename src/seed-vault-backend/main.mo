@@ -620,6 +620,32 @@ persistent actor Self {
     #ok(());
   };
 
+  public shared ({ caller }) func delete_seed(name : Text) : async Result.Result<(), Text> {
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (owner, seeds) = seedsByOwner[idx];
+        let filtered = Array.filter<(Text, Blob, Blob)>(seeds, func((n, _, _)) : Bool { not Text.equal(n, name) });
+        if (filtered.size() == seeds.size()) {
+          return #err("Seed not found: " # name);
+        };
+
+        let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
+          seedsByOwner.size(),
+          func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
+            if (j == idx) {
+              (owner, filtered)
+            } else {
+              seedsByOwner[j]
+            }
+          },
+        );
+        seedsByOwner := updatedOwners;
+        #ok(());
+      };
+    };
+  };
+
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
     let { icp_e8s } = await estimate_cost("decrypt", 1);
     switch (await chargeUser(caller, icp_e8s)) {

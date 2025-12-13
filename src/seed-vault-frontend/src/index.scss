@@ -159,6 +159,21 @@ textarea {
   gap: 1rem;
 }
 
+.seed-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.delete-button {
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+}
+
+.delete-button:hover:not(:disabled) {
+  box-shadow: 0 8px 18px rgba(239, 68, 68, 0.25);
+}
+
 .seed-name {
   font-weight: 700;
   margin: 0 0 0.35rem;
