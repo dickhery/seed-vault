@@ -103,6 +103,7 @@ function App() {
   const [paymentPrompt, setPaymentPrompt] = useState(null);
   const [isAddingSeed, setIsAddingSeed] = useState(false);
   const [decryptingSeeds, setDecryptingSeeds] = useState({});
+  const [deletingSeeds, setDeletingSeeds] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
   const [isTransferOpen, setIsTransferOpen] = useState(false);
@@ -298,6 +299,35 @@ function App() {
       setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
+      setLoading(false);
+    }
+  }
+
+  async function deleteSeed(seedName) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${seedName}"? This action cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingSeeds((prev) => ({ ...prev, [seedName]: true }));
+    setLoading(true);
+    setStatus(`Deleting "${seedName}"...`);
+    try {
+      const result = await backendActor.delete_seed(seedName);
+      if ('err' in result) {
+        throw new Error(result.err);
+      }
+      await loadSeeds();
+      setDecryptedSeeds((prev) => {
+        const updated = { ...prev };
+        delete updated[seedName];
+        return updated;
+      });
+      setStatus(`"${seedName}" deleted.`);
+    } catch (error) {
+      setStatus(`Failed to delete "${seedName}": ${error.message}`);
+    } finally {
+      setDeletingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
     }
   }
@@ -591,16 +621,26 @@ function App() {
                           <p className="seed-phrase">{decryptedSeeds[seedName]}</p>
                         )}
                       </div>
-                      {!decryptedSeeds[seedName] && (
+                      <div className="seed-actions">
+                        {!decryptedSeeds[seedName] && (
+                          <button
+                            onClick={() => decryptSeed(seedName)}
+                            disabled={decryptingSeeds[seedName] || loading || deletingSeeds[seedName]}
+                            className={decryptingSeeds[seedName] ? 'button-loading' : ''}
+                          >
+                            Decrypt
+                            {decryptingSeeds[seedName] && <span className="loading-spinner" />}
+                          </button>
+                        )}
                         <button
-                          onClick={() => decryptSeed(seedName)}
-                          disabled={decryptingSeeds[seedName] || loading}
-                          className={decryptingSeeds[seedName] ? 'button-loading' : ''}
+                          onClick={() => deleteSeed(seedName)}
+                          disabled={decryptingSeeds[seedName] || deletingSeeds[seedName] || loading}
+                          className={`delete-button ${deletingSeeds[seedName] ? 'button-loading' : ''}`}
                         >
-                          Decrypt
-                          {decryptingSeeds[seedName] && <span className="loading-spinner" />}
+                          Delete
+                          {deletingSeeds[seedName] && <span className="loading-spinner" />}
                         </button>
-                      )}
+                      </div>
                     </div>
                   </li>
                 ))}
