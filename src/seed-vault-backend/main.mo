@@ -68,7 +68,9 @@ persistent actor Self {
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
   type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
   type Xrc = actor {
-    get_exchange_rate : XrcGetExchangeRateRequest -> async XrcGetExchangeRateResult;
+    // XRC exposes `get_exchange_rate` as a query method; declaring it as such here
+    // ensures calls succeed instead of being rejected as updates.
+    get_exchange_rate : shared query (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
   };
 
   // Call the management canister directly for vetKD.
@@ -121,6 +123,7 @@ persistent actor Self {
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
+  let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
   // Adjusted derive estimate so the single transaction covers typical vetKD
   // derivation plus execution with a modest cushion while trimming the
   // user-facing ICP bill toward ~0.025 ICP per operation (~15% drop from
@@ -137,6 +140,8 @@ persistent actor Self {
 
   // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
+  // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
+  stable var last_xdr_per_icp_rate : Nat = 0;
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
     var i : Nat = 0;
@@ -247,11 +252,18 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
       timestamp = null;
     };
-    let fallback_rate : Nat = 2_000_000_000; // 0.5 ICP/XDR expressed as rate (XDR per ICP)*1e9 => 2e9
+    let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
+    ExperimentalCycles.add(XRC_CALL_CYCLES);
     let rateResult = try { await XRC.get_exchange_rate(request) } catch (_) { #Err("xrc unavailable") };
     let rateNat : Nat = switch (rateResult) {
-      case (#Ok({ rate })) { Nat64.toNat(rate) };
-      case (#Err(_)) { fallback_rate };
+      case (#Ok({ rate })) {
+        let r = Nat64.toNat(rate);
+        last_xdr_per_icp_rate := r;
+        r
+      };
+      case (#Err(_)) {
+        if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate }
+      };
     };
     let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
     let numerator : Nat = cycles * 100_000;
