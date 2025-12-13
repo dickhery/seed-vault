@@ -6,7 +6,7 @@
   "scripts": {
     "setup": "npm i && dfx canister create seed-vault-backend && dfx generate seed-vault-backend && dfx deploy",
     "start": "vite --port 3000",
-    "prebuild": "dfx generate",
+    "prebuild": "node check-ad-script.cjs && dfx generate",
     "build": "tsc && vite build",
     "format": "prettier --write \"src/**/*.{json,js,jsx,ts,tsx,css,scss}\""
   },
