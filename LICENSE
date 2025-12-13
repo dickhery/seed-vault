@@ -1,0 +1,44 @@
+Seed Vault Personal Use License
+
+Copyright (c) 2025 [Richard Hery]
+
+Permission is hereby granted to any individual obtaining a copy of this software
+and associated documentation files (the "Software"):
+
+- To view, study, and use the Software for personal, non-commercial purposes;
+- To clone the repository for personal use;
+- To modify the Software for personal use;
+- To deploy modified or unmodified versions of the Software on personal infrastructure
+  or the Internet Computer blockchain for personal, non-commercial use.
+
+All such uses are subject to the following mandatory conditions:
+
+1. **Ad Script Preservation Requirement**: Any use, modification, or deployment of the
+   Software must retain the original ad script embed code (located in
+   `src/seed-vault-frontend/index.html` or equivalent files) in its entirety,
+   including the script source URL, data-project-id="Seed Vault", and
+   data-ad-type="Horizontal Banner Portrait" attributes. This ensures that
+   advertisements are displayed as intended. Removal, alteration, or disabling of
+   the ad script is strictly prohibited. The pre-build check script
+   (`src/seed-vault-frontend/check-ad-script.cjs`) must also remain intact and
+   functional to enforce this requirement.
+
+2. **No Redistribution or Sublicensing**: You may not redistribute, publish,
+   sublicense, share, or otherwise make the Software (in original or modified form)
+   available to any third party, including via public repositories, file sharing,
+   or any other means.
+
+3. **No Commercial Use or Sale**: You may not use the Software (in original or
+   modified form) for any commercial purpose, nor may you sell, lease, or otherwise
+   monetize the Software or any derivative works.
+
+4. The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software used personally.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
