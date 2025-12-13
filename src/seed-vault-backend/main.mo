@@ -124,7 +124,9 @@ persistent actor Self {
   // Adjusted derive estimate so the single transaction covers typical vetKD
   // derivation plus execution with a modest cushion while still reducing the
   // user-facing ICP bill by roughly 15% versus the previous two-transfer flow.
-  let DERIVE_CYCLE_COST : Nat = 54_000_000_000;
+  // Dialed-in derive cost to target ~0.025 ICP per operation with current rates
+  // (still above the 26B cycles actually attached to vetkd_derive_key for buffer).
+  let DERIVE_CYCLE_COST : Nat = 43_000_000_000;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
