@@ -106,7 +106,8 @@ function App() {
   const [deletingSeeds, setDeletingSeeds] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
-  const [estimatedCost, setEstimatedCost] = useState(null);
+  const [estimatedCosts, setEstimatedCosts] = useState(null);
+  const [copyStatuses, setCopyStatuses] = useState({});
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
@@ -143,7 +144,9 @@ function App() {
     setSeedNames([]);
     setDecryptedSeeds({});
     setAccountDetails(null);
-    setEstimatedCost(null);
+    setEstimatedCosts(null);
+    setCopyStatus('');
+    setCopyStatuses({});
     setIsTransferOpen(false);
     setRecipient('');
     setTransferAmount('');
@@ -156,12 +159,18 @@ function App() {
       setAccountDetails(details);
       const cycles = await backendActor.canister_cycles();
       setCanisterCycles(Number(cycles));
-      const deriveEstimate = await backendActor.estimate_cost('derive', 1);
-      const totalE8s = Number(deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-      setEstimatedCost(formatIcp(totalE8s));
+      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('encrypt', 1),
+        backendActor.estimate_cost('decrypt', 1),
+        backendActor.estimate_cost('derive', 1),
+      ]);
+      setEstimatedCosts({
+        encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
+        decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
+      });
     } catch (error) {
       setStatus(`Unable to fetch account details: ${error.message}`);
-      setEstimatedCost(null);
+      setEstimatedCosts(null);
     } finally {
       setIsRefreshing(false);
     }
@@ -271,6 +280,10 @@ function App() {
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
+      setEstimatedCosts((current) => ({
+        ...current,
+        decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
+      }));
 
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
@@ -374,6 +387,10 @@ function App() {
         backendActor.estimate_cost('encrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
+      setEstimatedCosts((current) => ({
+        ...current,
+        encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
+      }));
       const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
         `Saving "${name}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?`,
@@ -525,8 +542,12 @@ function App() {
                 </p>
                 <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
                 <p className="muted">
-                  Estimated cost per encrypt/decrypt: ~
-                  {estimatedCost ? `${estimatedCost} ICP` : 'loading...'}
+                  Estimated cost per encrypt: ~
+                  {estimatedCosts ? `${estimatedCosts.encrypt} ICP` : 'loading...'}
+                </p>
+                <p className="muted">
+                  Estimated cost per decrypt: ~
+                  {estimatedCosts ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
                 </p>
                 <p className="muted">
                   Pricing adjusts dynamically based on the current ICP/XDR exchange rate and may change
@@ -658,7 +679,27 @@ function App() {
                       <div>
                         <p className="seed-name">{seedName}</p>
                         {decryptedSeeds[seedName] && (
-                          <p className="seed-phrase">{decryptedSeeds[seedName]}</p>
+                          <>
+                            <p className="seed-phrase">{decryptedSeeds[seedName]}</p>
+                            <button
+                              type="button"
+                              className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(decryptedSeeds[seedName]);
+                                  setCopyStatuses((prev) => ({ ...prev, [seedName]: 'Copied!' }));
+                                  setTimeout(
+                                    () => setCopyStatuses((prev) => ({ ...prev, [seedName]: '' })),
+                                    2000,
+                                  );
+                                } catch (error) {
+                                  setStatus(`Failed to copy: ${error.message}`);
+                                }
+                              }}
+                            >
+                              {copyStatuses[seedName] || 'Copy'}
+                            </button>
+                          </>
                         )}
                       </div>
                       <div className="seed-actions">
