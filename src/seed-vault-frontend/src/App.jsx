@@ -266,9 +266,9 @@ function App() {
         backendActor.estimate_cost('derive', 1),
       ]);
 
-      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
+      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
+        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and 5% buffer). Continue?`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
@@ -283,13 +283,39 @@ function App() {
         `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
       );
       setStatus(`Decrypting "${seedName}"...`);
-      const result = await backendActor.get_seed_cipher(seedName);
+      const transportSecretKey = TransportSecretKey.random();
+      const result = await backendActor.get_seed_cipher_and_key(
+        seedName,
+        transportSecretKey.publicKeyBytes(),
+      );
       if ('err' in result) {
         throw new Error(result.err);
       }
-      const [cipher, iv] = result.ok;
-      const key = await deriveSymmetricKey(seedName);
-      const phraseText = await decrypt(cipher, key, iv);
+      const [cipher, iv, encryptedKeyBytes] = result.ok;
+
+      const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
+      const derivedPublicKeyBytes = await backendActor.public_key();
+      const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
+      const input = new TextEncoder().encode(seedName);
+      let vetKey;
+      try {
+        vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
+      } catch (error) {
+        throw new Error(`vetKD decryption failed: ${error.message}`);
+      }
+
+      const vetKeyBytes =
+        vetKey instanceof Uint8Array
+          ? vetKey
+          : vetKey instanceof ArrayBuffer
+            ? new Uint8Array(vetKey)
+            : ArrayBuffer.isView(vetKey)
+              ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
+              : new Uint8Array(vetKey);
+      const hashed = await crypto.subtle.digest('SHA-256', vetKeyBytes);
+      const key = new Uint8Array(hashed);
+
+      const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
       await loadAccount();
 
@@ -342,9 +368,9 @@ function App() {
         backendActor.estimate_cost('encrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
-      const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + 2 * LEDGER_FEE_E8S;
+      const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Saving "${name}" will cost ${formatIcp(required)} ICP (including ledger fees). Continue?`,
+        `Saving "${name}" will cost ~${formatIcp(required)} ICP (including ledger fee and 5% buffer). Continue?`,
       );
       if (!confirmed) {
         setIsAddingSeed(false);

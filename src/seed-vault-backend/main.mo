@@ -119,9 +119,14 @@ persistent actor Self {
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
-  let ENCRYPT_CYCLE_COST : Nat = 30_000_000_000;
-  let DECRYPT_CYCLE_COST : Nat = 30_000_000_000;
-  let DERIVE_CYCLE_COST : Nat = 30_000_000_000;
+  let ENCRYPT_CYCLE_COST : Nat = 0;
+  let DECRYPT_CYCLE_COST : Nat = 0;
+  // Adjusted derive estimate so the single transaction covers typical vetKD
+  // derivation plus execution with a modest cushion while trimming the
+  // user-facing ICP bill toward ~0.025 ICP per operation (~15% drop from
+  // ~0.0317). Still above the 26B cycles attached to vetkd_derive_key for
+  // safety.
+  let DERIVE_CYCLE_COST : Nat = 34_000_000_000;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
@@ -233,6 +238,10 @@ persistent actor Self {
   };
 
   private func cyclesToIcp(cycles : Nat) : async Nat {
+    if (cycles == 0) {
+      return 0;
+    };
+
     let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; asset_class = #Cryptocurrency };
       quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
@@ -247,7 +256,10 @@ persistent actor Self {
     let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
     let numerator : Nat = cycles * 100_000;
     let baseCost = numerator / effectiveRate;
-    baseCost + ICP_TO_CYCLES_BUFFER_E8S;
+    // Add a ~5% buffer to account for execution and rounding without meaningfully
+    // overcharging the caller.
+    let buffered = (baseCost * 105) / 100;
+    buffered + ICP_TO_CYCLES_BUFFER_E8S;
   };
 
   private func operationCycles(operation : Text, count : Nat) : Nat {
@@ -588,12 +600,14 @@ persistent actor Self {
       return #err("Ciphertext cannot be empty");
     };
     let { icp_e8s } = await estimate_cost("encrypt", 1);
-    switch (await chargeUser(caller, icp_e8s)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok(_)) {};
+    if (icp_e8s > 0) {
+      switch (await chargeUser(caller, icp_e8s)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) {};
+      };
+      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore convertToCycles(amountToConvert);
     };
-    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    ignore convertToCycles(amountToConvert);
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwner[idx];
@@ -648,12 +662,14 @@ persistent actor Self {
 
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
     let { icp_e8s } = await estimate_cost("decrypt", 1);
-    switch (await chargeUser(caller, icp_e8s)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok(_)) {};
+    if (icp_e8s > 0) {
+      switch (await chargeUser(caller, icp_e8s)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) {};
+      };
+      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore convertToCycles(amountToConvert);
     };
-    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    ignore convertToCycles(amountToConvert);
 
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
@@ -669,6 +685,54 @@ persistent actor Self {
         switch (found) {
           case null { #err("Seed not found: " # name) };
           case (?pair) { #ok(pair) };
+        };
+      };
+    };
+  };
+
+  public shared ({ caller }) func get_seed_cipher_and_key(
+    name : Text,
+    transport_public_key : Blob,
+  ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    let decryptCost = await estimate_cost("decrypt", 1);
+    let deriveCost = await estimate_cost("derive", 1);
+    let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
+
+    if (total > 0) {
+      switch (await chargeUser(caller, total)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) {};
+      };
+      let amountToConvert = if (total > ICP_TO_CYCLES_BUFFER_E8S) { total - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore convertToCycles(amountToConvert);
+    };
+
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (_, seeds) = seedsByOwner[idx];
+        var found : ?(Blob, Blob) = null;
+        label search for ((n, c, ivVal) in Array.vals(seeds)) {
+          if (Text.equal(n, name)) {
+            found := ?(c, ivVal);
+            break search;
+          };
+        };
+
+        switch (found) {
+          case null { #err("Seed not found: " # name) };
+          case (?pair) {
+            let input : Blob = Text.encodeUtf8(name);
+            let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
+              input;
+              context = context(caller);
+              key_id = keyId();
+              transport_public_key;
+            });
+
+            let (cipher, iv) = pair;
+            #ok((cipher, iv, encrypted_key));
+          };
         };
       };
     };
