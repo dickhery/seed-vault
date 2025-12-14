@@ -790,25 +790,30 @@ function App() {
                 <p>
                   Canister cycles: <strong>{canisterCycles.toLocaleString()}</strong>
                 </p>
-                <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
-                <p className="muted">
-                  Estimated cost per encrypt: ~
-                  {estimatedCosts ? `${estimatedCosts.encrypt} ICP` : 'loading...'}
-                </p>
-                <p className="muted">
-                  Estimated cost per decrypt: ~
-                  {estimatedCosts ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
-                </p>
-                <p className="muted">
-                  Last refreshed:{' '}
-                  {estimateTimestamp
-                    ? new Date(estimateTimestamp).toLocaleString()
-                    : 'not yet updated'}
-                </p>
-                <p className="muted">
-                  Pricing adjusts dynamically based on the current ICP/XDR exchange rate and may change
-                  frequently.
-                </p>
+                <details>
+                  <summary>View pricing info</summary>
+                  <div>
+                    <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
+                    <p className="muted">
+                      Estimated cost per encrypt: ~
+                      {estimatedCosts ? `${estimatedCosts.encrypt} ICP` : 'loading...'}
+                    </p>
+                    <p className="muted">
+                      Estimated cost per decrypt: ~
+                      {estimatedCosts ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
+                    </p>
+                    <p className="muted">
+                      Last refreshed:{' '}
+                      {estimateTimestamp
+                        ? new Date(estimateTimestamp).toLocaleString()
+                        : 'not yet updated'}
+                    </p>
+                    <p className="muted">
+                      Pricing adjusts dynamically based on the current ICP/XDR exchange rate and may change
+                      frequently.
+                    </p>
+                  </div>
+                </details>
               </>
             ) : (
               <p className="muted">Loading account details...</p>
