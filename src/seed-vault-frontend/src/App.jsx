@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
+import CryptoJS from 'crypto-js';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
@@ -36,6 +37,16 @@ function toHex(bytes = []) {
     .join('');
 }
 
+function wordArrayToUint8(wordArray) {
+  const words = wordArray.words;
+  const sigBytes = wordArray.sigBytes;
+  const bytes = new Uint8Array(sigBytes);
+  for (let i = 0; i < sigBytes; i += 1) {
+    bytes[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+  }
+  return bytes;
+}
+
 function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
 }
@@ -56,11 +67,18 @@ async function computeAccountId(canisterPrincipal, subaccountBytes) {
   data.set(ownerBytes, 1 + domainBuffer.length);
   data.set(sub, 1 + domainBuffer.length + ownerBytes.length);
 
-  if (typeof crypto === 'undefined' || !crypto.subtle) {
-    throw new Error('WebCrypto unavailable');
+  let hashBytes;
+  try {
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      throw new Error('WebCrypto unavailable');
+    }
+    const hashBuffer = await crypto.subtle.digest('SHA-224', data);
+    hashBytes = new Uint8Array(hashBuffer);
+  } catch (error) {
+    // Fallback for environments where SHA-224 is unsupported by WebCrypto.
+    const hashWordArray = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data));
+    hashBytes = wordArrayToUint8(hashWordArray);
   }
-  const hashBuffer = await crypto.subtle.digest('SHA-224', data);
-  const hashBytes = new Uint8Array(hashBuffer);
   let checksum = 0xffffffff;
   for (let i = 0; i < hashBytes.length; i += 1) {
     checksum = CRC32_TABLE[(checksum ^ hashBytes[i]) & 0xff] ^ (checksum >>> 8);
