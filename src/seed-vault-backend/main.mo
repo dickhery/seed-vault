@@ -185,7 +185,7 @@ persistent actor Self {
   };
 
   private func normalizeName(name : Text) : Text {
-    Text.trim(name, #predicate Char.isWhitespace)
+    Text.trim(name, #predicate(Char.isWhitespace))
   };
 
   private func isValidSeedName(name : Text) : Bool {
