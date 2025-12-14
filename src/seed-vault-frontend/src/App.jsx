@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
 import CryptoJS from 'crypto-js';
@@ -114,6 +114,8 @@ function App() {
   const [transferAmount, setTransferAmount] = useState('');
   const [hiddenSeeds, setHiddenSeeds] = useState({});
   const [estimateTimestamp, setEstimateTimestamp] = useState(null);
+  const [isWaiting, setIsWaiting] = useState(false);
+  const waitingRef = useRef(false);
 
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
@@ -121,6 +123,12 @@ function App() {
       agentOptions: { identity },
     });
   }, [identity]);
+
+  useEffect(() => {
+    if (window?.location?.protocol !== 'https:') {
+      setStatus('Warning: Use HTTPS for security.');
+    }
+  }, []);
 
   useEffect(() => {
     if (identity) {
@@ -202,6 +210,8 @@ function App() {
   }
 
   async function waitForBalance(required, message) {
+    setIsWaiting(true);
+    waitingRef.current = true;
     setPaymentPrompt({
       required,
       message,
@@ -210,20 +220,27 @@ function App() {
     setStatus('Awaiting payment...');
 
     let checks = 0;
-    while (checks < 12) {
+    while (checks < 12 && waitingRef.current) {
       const details = await backendActor.get_account_details();
       setAccountDetails(details);
       if (Number(details.balance) >= required) {
         setPaymentPrompt(null);
         setStatus('Payment received. Proceeding...');
+        setIsWaiting(false);
+        waitingRef.current = false;
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 5000));
       checks += 1;
     }
     setPaymentPrompt(null);
-    setStatus('Payment timeout.');
-    throw new Error('Insufficient funds to cover cycle costs.');
+    setIsWaiting(false);
+    const timeoutMessage = waitingRef.current
+      ? 'Payment timeout.'
+      : 'Payment cancelled by user.';
+    waitingRef.current = false;
+    setStatus(timeoutMessage);
+    throw new Error(timeoutMessage);
   }
 
   async function deriveSymmetricKey(seedName) {
@@ -428,6 +445,9 @@ function App() {
     if (!/^[a-z\s]+$/i.test(phrase.trim())) {
       setStatus('Seed phrase should contain only letters and spaces.');
       return;
+    }
+    if (phrase.trim().split(/\s+/).length < 12) {
+      setStatus('Warning: Use at least 12 words for better security.');
     }
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
@@ -638,6 +658,18 @@ function App() {
                   )}
                 </p>
                 <p className="muted">Waiting for funds to arrive...</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWaiting(false);
+                    waitingRef.current = false;
+                    setPaymentPrompt(null);
+                    setStatus('Payment cancelled by user.');
+                  }}
+                  disabled={!isWaiting}
+                >
+                  Cancel
+                </button>
               </div>
             )}
             {isTransferOpen && (
