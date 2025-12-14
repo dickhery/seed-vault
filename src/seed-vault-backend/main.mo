@@ -149,8 +149,8 @@ persistent actor Self {
 
   // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
-  // Remember the last successful XRC USD/ICP rate so pricing stays fresh even if a later call fails.
-  stable var last_usd_per_icp_rate : Nat = 0;
+  // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
+  stable var last_xdr_per_icp_rate : Nat = 0;
   // Track per-user operation counts for rate limiting.
   stable var userOps : Trie.Trie<Principal, (Nat, Int)> = Trie.empty();
 
@@ -326,10 +326,10 @@ persistent actor Self {
 
     let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; asset_class = #Cryptocurrency };
-      quote_asset = { symbol = "USD"; asset_class = #FiatCurrency };
+      quote_asset = { symbol = "XDR"; asset_class = #FiatCurrency };
       timestamp = null;
     };
-    let fallback_rate : Nat = 4_000_000_000; // Fallback USD per ICP *1e9 (≈4 USD per ICP)
+    let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
     let balance = ExperimentalCycles.balance();
 
     let rateResult : XrcGetExchangeRateResult =
@@ -348,13 +348,13 @@ persistent actor Self {
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
-        last_usd_per_icp_rate := r;
-        Debug.print("XRC rate (USD per ICP *1e9) used: " # Nat.toText(r));
+        last_xdr_per_icp_rate := r;
+        Debug.print("XRC rate (XDR per ICP *1e9) used: " # Nat.toText(r));
         r
       };
       case (#Err(_)) {
-        Debug.print("Using cached/fallback USD rate. Cached: " # Nat.toText(last_usd_per_icp_rate));
-        if (last_usd_per_icp_rate > 0) { last_usd_per_icp_rate } else { fallback_rate }
+        Debug.print("Using cached/fallback XDR rate. Cached: " # Nat.toText(last_xdr_per_icp_rate));
+        if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate }
       };
     };
     let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
