@@ -11,6 +11,8 @@ import Nat32 "mo:base/Nat32";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Time "mo:base/Time";
+import Trie "mo:base/Trie";
 
 persistent actor Self {
   // Type definitions for vetKD interactions
@@ -147,6 +149,11 @@ persistent actor Self {
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
   // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
   stable var last_xdr_per_icp_rate : Nat = 0;
+  // Track per-user operation counts for rate limiting.
+  stable var userOps : Trie.Trie<Principal, (Nat, Int)> = Trie.empty();
+
+  let RATE_LIMIT : Nat = 50; // operations per reset interval
+  let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
     var i : Nat = 0;
@@ -175,6 +182,36 @@ persistent actor Self {
   private func keyId() : VetKdKeyId {
     // Use the production key on mainnet; switch to "test_key_1" if you want cheaper testing.
     { curve = #bls12_381_g2; name = "key_1" };
+  };
+
+  private func callerKey(principal : Principal) : Trie.Key<Principal> {
+    { key = principal; hash = Principal.hash(principal) }
+  };
+
+  private func checkRateLimit(caller : Principal) : Result.Result<(), Text> {
+    let now = Time.now();
+    let key = callerKey(caller);
+
+    switch (Trie.find(userOps, key, Principal.equal)) {
+      case (? (count, lastReset)) {
+        if (now - lastReset >= RESET_INTERVAL) {
+          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
+          userOps := updatedTrie;
+          #ok(())
+        } else if (count >= RATE_LIMIT) {
+          #err("Rate limit exceeded. Try again later.")
+        } else {
+          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (count + 1, lastReset));
+          userOps := updatedTrie;
+          #ok(())
+        }
+      };
+      case null {
+        let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
+        userOps := updatedTrie;
+        #ok(())
+      };
+    }
   };
 
   private func subaccount(principal : Principal) : Blob {
@@ -625,6 +662,11 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { throw Error.reject(msg) };
+      case (#ok(())) {};
+    };
+
     let { icp_e8s } = await estimate_cost("derive", 1);
     var charged = false;
 
@@ -674,6 +716,11 @@ persistent actor Self {
       case null {};
     };
 
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
     let { icp_e8s } = await estimate_cost("encrypt", 1);
     var charged = false;
     let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
@@ -720,6 +767,11 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func delete_seed(name : Text) : async Result.Result<(), Text> {
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -746,6 +798,11 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -791,6 +848,11 @@ persistent actor Self {
     name : Text,
     transport_public_key : Blob,
   ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
