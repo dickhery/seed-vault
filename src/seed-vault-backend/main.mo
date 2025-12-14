@@ -181,12 +181,16 @@ persistent actor Self {
   };
 
   private func isValidSeedName(name : Text) : Bool {
-    label chars for (c in Text.chars(name)) {
+    let chars = Text.toArray(name);
+    var i : Nat = 0;
+    while (i < chars.size()) {
+      let c = chars[i];
       if (
         not (Char.isAlphabetic(c) or Char.isDigit(c) or Char.equal(c, ' ') or Char.equal(c, '-') or Char.equal(c, '_'))
       ) {
         return false;
       };
+      i += 1;
     };
     true;
   };
