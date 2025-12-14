@@ -124,7 +124,10 @@ persistent actor Self {
 
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
-  let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
+  // Use a conservative fallback (1.5 ICP per XDR) so we never undercharge
+  // callers when fresh pricing is unavailable. This is intentionally higher
+  // than recent market rates to guarantee sufficient funds for execution.
+  let ICP_PER_XDR_FALLBACK : Nat = 150_000_000;
   // 420 UTF-8 characters can expand to ~1680 bytes in the worst case; AES-GCM adds
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
@@ -330,7 +333,9 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
       timestamp = null;
     };
-    let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
+    // Derive the fallback XDR/ICP rate from the conservative ICP/XDR fallback
+    // above so the dynamic pricing path and the static guardrail stay in sync.
+    let fallback_rate : Nat = (100_000_000_000_000_000 / ICP_PER_XDR_FALLBACK);
     var balance = ExperimentalCycles.balance();
     var fallbackUsed = false;
 
