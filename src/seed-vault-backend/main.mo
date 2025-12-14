@@ -71,9 +71,9 @@ persistent actor Self {
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
   type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
   type Xrc = actor {
-    // XRC exposes `get_exchange_rate` as a query method; declaring it as such here
-    // ensures calls succeed instead of being rejected as updates.
-    get_exchange_rate : shared query (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
+    // XRC is an update call that requires cycles; declaring it as such ensures cycles
+    // are attached and the request is accepted.
+    get_exchange_rate : shared (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
   };
 
   // Call the management canister directly for vetKD.
@@ -132,7 +132,7 @@ persistent actor Self {
   let MAX_SEEDS_PER_USER : Nat = 50;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
-  let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
+  let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission (1B minimum)
   // Adjusted derive estimate so the single transaction covers typical vetKD
   // derivation plus execution with a modest cushion while trimming the
   // user-facing ICP bill toward ~0.025 ICP per operation (~15% drop from
@@ -330,11 +330,21 @@ persistent actor Self {
       timestamp = null;
     };
     let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
-    ExperimentalCycles.add(XRC_CALL_CYCLES);
-    let rateResult = try { await XRC.get_exchange_rate(request) } catch (e) {
-      Debug.print("XRC call failed: " # Error.message(e));
-      #Err("xrc unavailable")
-    };
+    let balance = ExperimentalCycles.balance();
+
+    let rateResult : XrcGetExchangeRateResult =
+      if (balance >= XRC_CALL_CYCLES) {
+        ExperimentalCycles.add(XRC_CALL_CYCLES);
+        try {
+          await XRC.get_exchange_rate(request)
+        } catch (e) {
+          Debug.print("XRC call failed: " # Error.message(e));
+          #Err("xrc unavailable")
+        }
+      } else {
+        Debug.print("Insufficient cycles to call XRC; using cached/fallback rate.");
+        #Err("xrc unavailable")
+      };
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
