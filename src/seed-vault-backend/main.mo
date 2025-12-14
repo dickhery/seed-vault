@@ -128,6 +128,7 @@ persistent actor Self {
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
   let MAX_SEED_CIPHER_BYTES : Nat = 2_048;
+  let MAX_SEED_NAME_CHARS : Nat = 100;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
   let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
@@ -177,6 +178,21 @@ persistent actor Self {
       i += 1;
     };
     false;
+  };
+
+  private func isValidSeedName(name : Text) : Bool {
+    let chars = Text.toArray(name);
+    var i : Nat = 0;
+    while (i < chars.size()) {
+      let c = chars[i];
+      if (
+        not (Char.isAlphabetic(c) or Char.isDigit(c) or Char.equal(c, ' ') or Char.equal(c, '-') or Char.equal(c, '_'))
+      ) {
+        return false;
+      };
+      i += 1;
+    };
+    true;
   };
 
   private func keyId() : VetKdKeyId {
@@ -698,6 +714,12 @@ persistent actor Self {
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
     if (Text.size(name) == 0) {
       return #err("Name cannot be empty");
+    };
+    if (Text.size(name) > MAX_SEED_NAME_CHARS) {
+      return #err("Name too long. Maximum 100 characters.");
+    };
+    if (not isValidSeedName(name)) {
+      return #err("Invalid characters in name. Allowed: letters, digits, spaces, hyphens, underscores.");
     };
     if (Blob.toArray(cipher).size() == 0) {
       return #err("Ciphertext cannot be empty");
