@@ -8,6 +8,7 @@ import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/
 const II_URL = 'https://identity.ic0.app';
 const LEDGER_FEE_E8S = 10_000;
 const MAX_SEED_CHARS = 420;
+const MAX_SEED_NAME_CHARS = 100;
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -117,6 +118,11 @@ function App() {
   const [isWaiting, setIsWaiting] = useState(false);
   const waitingRef = useRef(false);
 
+  const isSecureContext = useMemo(() => {
+    if (typeof window === 'undefined') return true;
+    return window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+  }, []);
+
   const backendActor = useMemo(() => {
     if (!identity) return seed_vault_backend;
     return createActor(process.env.CANISTER_ID_SEED_VAULT_BACKEND, {
@@ -125,7 +131,13 @@ function App() {
   }, [identity]);
 
   useEffect(() => {
-    if (window?.location?.protocol !== 'https:') {
+    if (typeof window === 'undefined') return;
+    const { protocol, hostname, pathname, search, hash } = window.location;
+    if (protocol !== 'https:' && hostname !== 'localhost') {
+      window.location.href = `https://${hostname}${pathname}${search}${hash}`;
+      return;
+    }
+    if (protocol !== 'https:') {
       setStatus('Warning: Use HTTPS for security.');
     }
   }, []);
@@ -438,6 +450,10 @@ function App() {
   async function handleAddSeed(event) {
     event.preventDefault();
     if (!name || !phrase) return;
+    if (name.length > MAX_SEED_NAME_CHARS) {
+      setStatus(`Seed name is too long. Limit is ${MAX_SEED_NAME_CHARS} characters.`);
+      return;
+    }
     if (phrase.length > MAX_SEED_CHARS) {
       setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
       return;
@@ -592,6 +608,10 @@ function App() {
                       type="button"
                       className={`copy-button ${copyStatus === 'Copied!' ? 'copied' : ''}`}
                       onClick={async () => {
+                        if (!isSecureContext) {
+                          setStatus('Copy is only available over HTTPS or localhost.');
+                          return;
+                        }
                         const id = computeAccountId(accountDetails.canister, accountDetails.subaccount);
                         await navigator.clipboard.writeText(id);
                         setCopyStatus('Copied!');
@@ -726,10 +746,15 @@ function App() {
                 Seed name
                 <input
                   required
+                  maxLength={MAX_SEED_NAME_CHARS}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ledger wallet"
                 />
+                <p className="muted">{name.length}/{MAX_SEED_NAME_CHARS} characters</p>
+                {name.length > MAX_SEED_NAME_CHARS && (
+                  <p className="status error">Name exceeds {MAX_SEED_NAME_CHARS} characters.</p>
+                )}
               </label>
               <label>
                 Seed phrase
@@ -742,11 +767,11 @@ function App() {
                 />
                 <p className="muted">{phrase.length}/{MAX_SEED_CHARS} characters</p>
               </label>
-              <button
-                type="submit"
-                disabled={!name || !phrase || isAddingSeed || loading}
-                className={isAddingSeed ? 'button-loading' : ''}
-              >
+                <button
+                  type="submit"
+                  disabled={!name || !phrase || name.length > MAX_SEED_NAME_CHARS || isAddingSeed || loading}
+                  className={isAddingSeed ? 'button-loading' : ''}
+                >
                 Save encrypted seed
                 {isAddingSeed && <span className="loading-spinner" />}
               </button>
@@ -787,6 +812,11 @@ function App() {
                               onClick={async () => {
                                 if (hiddenSeeds[seedName]) {
                                   setStatus('Reveal the seed phrase before copying.');
+                                  return;
+                                }
+
+                                if (!isSecureContext) {
+                                  setStatus('Copy is only available over HTTPS or localhost.');
                                   return;
                                 }
 
