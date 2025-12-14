@@ -129,6 +129,7 @@ persistent actor Self {
   // even if the frontend is bypassed.
   let MAX_SEED_CIPHER_BYTES : Nat = 2_048;
   let MAX_SEED_NAME_CHARS : Nat = 100;
+  let MAX_SEEDS_PER_USER : Nat = 50;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
   let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission
@@ -195,6 +196,11 @@ persistent actor Self {
     };
 
     let chars = Text.toArray(trimmed);
+    let first = chars[0];
+    let last = chars[chars.size() - 1];
+    if (Char.equal(first, '-') or Char.equal(first, '_') or Char.equal(last, '-') or Char.equal(last, '_')) {
+      return false;
+    };
     var i : Nat = 0;
     while (i < chars.size()) {
       let c = chars[i];
@@ -726,6 +732,7 @@ persistent actor Self {
 
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
     let normalizedName = normalizeName(name);
+    Debug.print("Add seed requested by " # Principal.toText(caller) # " for name '" # normalizedName # "'");
 
     if (Text.size(normalizedName) == 0) {
       return #err("Name cannot be empty");
@@ -746,6 +753,9 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwner[idx];
+        if (seeds.size() >= MAX_SEEDS_PER_USER) {
+          return #err("Maximum number of seeds reached. Delete one before adding another.");
+        };
         if (hasSeedName(seeds, normalizedName)) {
           return #err("Name already exists for this user");
         };
@@ -808,6 +818,7 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
+    Debug.print("Delete seed requested by " # Principal.toText(caller) # " for name '" # name # "'");
 
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
@@ -839,6 +850,7 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
+    Debug.print("Cipher fetch requested by " # Principal.toText(caller) # " for name '" # name # "'");
 
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
@@ -889,6 +901,7 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
+    Debug.print("Decrypt+derive requested by " # Principal.toText(caller) # " for name '" # name # "'");
 
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };

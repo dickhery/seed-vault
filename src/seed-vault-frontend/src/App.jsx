@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
-import CryptoJS from 'crypto-js';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
@@ -21,6 +20,15 @@ const CRC32_TABLE = (() => {
   }
   return table;
 })();
+
+function escapeHtml(unsafe = '') {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 function toHex(bytes = []) {
   return Array.from(bytes)
@@ -48,21 +56,11 @@ async function computeAccountId(canisterPrincipal, subaccountBytes) {
   data.set(ownerBytes, 1 + domainBuffer.length);
   data.set(sub, 1 + domainBuffer.length + ownerBytes.length);
 
-  let hashBytes;
-  try {
-    if (typeof crypto === 'undefined' || !crypto.subtle) {
-      throw new Error('WebCrypto unavailable');
-    }
-    const hashBuffer = await crypto.subtle.digest('SHA-224', data);
-    hashBytes = new Uint8Array(hashBuffer);
-  } catch (_) {
-    const hashHex = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data)).toString(CryptoJS.enc.Hex);
-    const bytes = new Uint8Array(hashHex.length / 2);
-    for (let i = 0; i < hashHex.length; i += 2) {
-      bytes[i / 2] = parseInt(hashHex.substr(i, 2), 16);
-    }
-    hashBytes = bytes;
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new Error('WebCrypto unavailable');
   }
+  const hashBuffer = await crypto.subtle.digest('SHA-224', data);
+  const hashBytes = new Uint8Array(hashBuffer);
   let checksum = 0xffffffff;
   for (let i = 0; i < hashBytes.length; i += 1) {
     checksum = CRC32_TABLE[(checksum ^ hashBytes[i]) & 0xff] ^ (checksum >>> 8);
@@ -91,8 +89,33 @@ function isValidPrincipal(text) {
   }
 }
 
+function crc32(bytes) {
+  let checksum = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    checksum = CRC32_TABLE[(checksum ^ bytes[i]) & 0xff] ^ (checksum >>> 8);
+  }
+  return (checksum ^ 0xffffffff) >>> 0;
+}
+
+function hexToBytes(text) {
+  if (text.length % 2 !== 0) return null;
+  const bytes = new Uint8Array(text.length / 2);
+  for (let i = 0; i < text.length; i += 2) {
+    const byte = parseInt(text.slice(i, i + 2), 16);
+    if (Number.isNaN(byte)) return null;
+    bytes[i / 2] = byte;
+  }
+  return bytes;
+}
+
 function isValidAccountId(text) {
-  return text.length === 64 && /^[0-9A-Fa-f]+$/.test(text);
+  if (text.length !== 64 || !/^[0-9A-Fa-f]+$/.test(text)) return false;
+  const bytes = hexToBytes(text);
+  if (!bytes || bytes.length !== 32) return false;
+  const expected = crc32(bytes.subarray(4));
+  const provided =
+    (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+  return (expected >>> 0) === (provided >>> 0);
 }
 
 function App() {
@@ -328,6 +351,24 @@ function App() {
     throw new Error(timeoutMessage);
   }
 
+  async function hkdfExpand(keyBytes, info) {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(info));
+    return new Uint8Array(signature);
+  }
+
+  async function deriveAesKeyFromVetKey(vetKeyBytes) {
+    const hashed = new Uint8Array(await crypto.subtle.digest('SHA-256', vetKeyBytes));
+    const expanded = await hkdfExpand(hashed, 'aes-256-gcm-seed-vault');
+    return expanded.subarray(0, 32);
+  }
+
   async function deriveSymmetricKey(seedName) {
     const transportSecretKey = TransportSecretKey.random();
     let encryptedKeyBytes;
@@ -360,8 +401,7 @@ function App() {
             ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
             : new Uint8Array(vetKey);
 
-    const hashed = await crypto.subtle.digest('SHA-256', vetKeyBytes);
-    return new Uint8Array(hashed);
+    return deriveAesKeyFromVetKey(vetKeyBytes);
   }
 
   async function encrypt(plaintext, key) {
@@ -467,8 +507,7 @@ function App() {
             : ArrayBuffer.isView(vetKey)
               ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
               : new Uint8Array(vetKey);
-      const hashed = await crypto.subtle.digest('SHA-256', vetKeyBytes);
-      const key = new Uint8Array(hashed);
+      const key = await deriveAesKeyFromVetKey(vetKeyBytes);
 
       const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
@@ -524,6 +563,7 @@ function App() {
     event.preventDefault();
     const trimmedName = name.trim();
     const trimmedPhrase = phrase.trim();
+    const words = trimmedPhrase.split(/\s+/);
     if (!trimmedName || !trimmedPhrase) {
       setStatus('Seed name and phrase are required.');
       return;
@@ -536,17 +576,22 @@ function App() {
       setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
       return;
     }
-    if (!/^[a-z\s]+$/i.test(trimmedPhrase)) {
-      setStatus('Seed phrase should contain only letters and spaces.');
-      return;
-    }
-    if (trimmedPhrase.split(/\s+/).length < 12) {
-      setStatus('Seed phrase must contain at least 12 words.');
+    if (words.length < 12 || words.length > 24 || !words.every((word) => /^[a-z]+$/.test(word))) {
+      setStatus('Seed phrase must be 12-24 lowercase words.');
       return;
     }
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
     try {
+      const securityConfirmed = window.confirm(
+        'Warning: Enter and decrypt seed phrases only on trusted devices. Proceed to encrypt?',
+      );
+      if (!securityConfirmed) {
+        setIsAddingSeed(false);
+        setStatus('');
+        return;
+      }
+
       const [encryptEstimate, deriveEstimate] = await Promise.all([
         backendActor.estimate_cost('encrypt', 1),
         backendActor.estimate_cost('derive', 1),
@@ -873,7 +918,7 @@ function App() {
                   <li key={seedName}>
                     <div className="seed-row">
                       <div>
-                        <p className="seed-name">{seedName.replace(/[<>]/g, '')}</p>
+                        <p className="seed-name">{escapeHtml(seedName)}</p>
                         {decryptedSeeds[seedName] && (
                           <>
                             <p className="seed-phrase">
@@ -899,6 +944,14 @@ function App() {
 
                                 if (!isSecureContext) {
                                   setStatus('Copy is only available over HTTPS or localhost.');
+                                  return;
+                                }
+
+                                const confirmed = window.confirm(
+                                  'Warning: Copying exposes the seed phrase to your clipboard. Continue?',
+                                );
+                                if (!confirmed) {
+                                  setStatus('Copy cancelled.');
                                   return;
                                 }
 
