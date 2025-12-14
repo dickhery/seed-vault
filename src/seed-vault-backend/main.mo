@@ -319,9 +319,9 @@ persistent actor Self {
     })
   };
 
-  private func cyclesToIcp(cycles : Nat) : async Nat {
+  private func cyclesToIcp(cycles : Nat) : async { icp_e8s : Nat; fallback_used : Bool } {
     if (cycles == 0) {
-      return 0;
+      return { icp_e8s = 0; fallback_used = false };
     };
 
     let request : XrcGetExchangeRateRequest = {
@@ -330,7 +330,34 @@ persistent actor Self {
       timestamp = null;
     };
     let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
-    let balance = ExperimentalCycles.balance();
+    var balance = ExperimentalCycles.balance();
+    var fallbackUsed = false;
+
+    // If we're short on cycles for an XRC call but have ICP sitting in the default
+    // account, opportunistically convert a portion so we can avoid stale pricing.
+    if (balance < XRC_CALL_CYCLES) {
+      let selfPrincipal = Principal.fromActor(Self);
+      let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
+      let icpBalance = try {
+        await ledger().icrc1_balance_of(defaultAccount)
+      } catch (e) {
+        Debug.print("Unable to check ICP balance for auto top-up: " # Error.message(e));
+        0
+      };
+
+      // Leave the transfer fee untouched so we can pay for the conversion itself.
+      if (icpBalance > ICP_TO_CYCLES_BUFFER_E8S) {
+        let convertible = icpBalance - ICP_TO_CYCLES_BUFFER_E8S;
+        switch (await convertToCycles(convertible)) {
+          case (#ok(())) {
+            balance := ExperimentalCycles.balance();
+          };
+          case (#err(msg)) {
+            Debug.print("Auto-convert for XRC pricing failed: " # msg);
+          };
+        };
+      };
+    };
 
     let rateResult : XrcGetExchangeRateResult =
       if (balance >= XRC_CALL_CYCLES) {
@@ -339,10 +366,12 @@ persistent actor Self {
           await XRC.get_exchange_rate(request)
         } catch (e) {
           Debug.print("XRC call failed: " # Error.message(e));
+          fallbackUsed := true;
           #Err("xrc unavailable")
         }
       } else {
         Debug.print("Insufficient cycles to call XRC; using cached/fallback rate.");
+        fallbackUsed := true;
         #Err("xrc unavailable")
       };
     let rateNat : Nat = switch (rateResult) {
@@ -354,6 +383,7 @@ persistent actor Self {
       };
       case (#Err(_)) {
         Debug.print("Using cached/fallback XDR rate. Cached: " # Nat.toText(last_xdr_per_icp_rate));
+        fallbackUsed := true;
         if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate }
       };
     };
@@ -363,7 +393,7 @@ persistent actor Self {
     // Add a ~5% buffer to account for execution and rounding without meaningfully
     // overcharging the caller.
     let buffered = (baseCost * 105) / 100;
-    buffered + ICP_TO_CYCLES_BUFFER_E8S;
+    { icp_e8s = buffered + ICP_TO_CYCLES_BUFFER_E8S; fallback_used = fallbackUsed };
   };
 
   private func operationCycles(operation : Text, count : Nat) : Nat {
@@ -680,13 +710,19 @@ persistent actor Self {
     };
   };
 
-  public shared ({ caller = _ }) func estimate_cost(operation : Text, count : Nat) : async {
+  public shared ({ caller }) func estimate_cost(operation : Text, count : Nat) : async {
     cycles : Nat;
     icp_e8s : Nat;
+    fallback_used : Bool;
   } {
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return { cycles = 0; icp_e8s = 0; fallback_used = true } };
+      case (#ok(())) {};
+    };
+
     let cycles = operationCycles(operation, count);
-    let icp_e8s = await cyclesToIcp(cycles);
-    { cycles; icp_e8s };
+    let { icp_e8s; fallback_used } = await cyclesToIcp(cycles);
+    { cycles; icp_e8s; fallback_used };
   };
 
   public query ({ caller }) func seed_count() : async Nat {

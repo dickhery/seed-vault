@@ -160,6 +160,7 @@ function App() {
   const [hiddenSeeds, setHiddenSeeds] = useState({});
   const [estimateTimestamp, setEstimateTimestamp] = useState(null);
   const [isWaiting, setIsWaiting] = useState(false);
+  const [usingFallbackPricing, setUsingFallbackPricing] = useState(false);
   const [accountId, setAccountId] = useState('');
   const waitingRef = useRef(false);
 
@@ -318,15 +319,22 @@ function App() {
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
+      const fallback =
+        encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
       setEstimatedCosts({
         encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
         decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
       });
       setEstimateTimestamp(Date.now());
+      setUsingFallbackPricing(Boolean(fallback));
+      if (fallback) {
+        setStatus('Using fallback pricing. Costs may shift once live rates are available.');
+      }
     } catch (error) {
       setStatus('Unable to fetch account details. Please try again.');
       setEstimatedCosts(null);
       setEstimateTimestamp(null);
+      setUsingFallbackPricing(false);
     } finally {
       setIsRefreshing(false);
     }
@@ -477,6 +485,7 @@ function App() {
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
+      const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
       setEstimatedCosts((current) => ({
         ...current,
         decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
@@ -484,7 +493,9 @@ function App() {
 
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide after 5 minutes.`,
+        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
+          fallback ? ' (Using fallback exchange rate estimate.)' : ''
+        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide after 5 minutes.`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
@@ -630,13 +641,16 @@ function App() {
         backendActor.estimate_cost('encrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
+      const fallback = encryptEstimate.fallback_used || deriveEstimate.fallback_used;
       setEstimatedCosts((current) => ({
         ...current,
         encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
       }));
       const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Saving "${trimmedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?`,
+        `Saving "${trimmedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
+          fallback ? ' (Using fallback exchange rate estimate.)' : ''
+        } Continue?`,
       );
       if (!confirmed) {
         setIsAddingSeed(false);
@@ -812,6 +826,11 @@ function App() {
                       Pricing adjusts dynamically based on the current ICP/XDR exchange rate and may change
                       frequently.
                     </p>
+                    {usingFallbackPricing && (
+                      <p className="status warning">
+                        Live exchange rate unavailable; using fallback pricing until the canister refreshes.
+                      </p>
+                    )}
                   </div>
                 </details>
               </>
