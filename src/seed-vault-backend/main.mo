@@ -133,13 +133,12 @@ persistent actor Self {
   let MAX_SEEDS_PER_USER : Nat = 50;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
-  let XRC_CALL_CYCLES : Nat = 1_000_000_000; // pay for XRC request submission (1B minimum)
-  // Adjusted derive estimate so the single transaction covers typical vetKD
-  // derivation plus execution with a modest cushion while trimming the
-  // user-facing ICP bill toward ~0.025 ICP per operation (~15% drop from
-  // ~0.0317). Still above the 26B cycles attached to vetkd_derive_key for
-  // safety.
-  let DERIVE_CYCLE_COST : Nat = 34_000_000_000;
+  // Use the documented maximum XRC cost so we attempt live pricing whenever
+  // possible instead of requiring 1B cycles on hand before making the call.
+  let XRC_CALL_CYCLES : Nat = 500_000_000;
+  // Match the cycles attached in vetkd_derive_key so pricing reflects the
+  // actual derivation cost instead of an inflated estimate.
+  let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
@@ -360,21 +359,15 @@ persistent actor Self {
       };
     };
 
-    let rateResult : XrcGetExchangeRateResult =
-      if (balance >= XRC_CALL_CYCLES) {
-        ExperimentalCycles.add(XRC_CALL_CYCLES);
-        try {
-          await XRC.get_exchange_rate(request)
-        } catch (e) {
-          Debug.print("XRC call failed: " # Error.message(e));
-          fallbackUsed := true;
-          #Err("xrc unavailable")
-        }
-      } else {
-        Debug.print("Insufficient cycles to call XRC; using cached/fallback rate.");
-        fallbackUsed := true;
-        #Err("xrc unavailable")
-      };
+    let to_add = Nat.min(balance, XRC_CALL_CYCLES);
+    ExperimentalCycles.add(to_add);
+    let rateResult : XrcGetExchangeRateResult = try {
+      await XRC.get_exchange_rate(request)
+    } catch (e) {
+      Debug.print("XRC call failed: " # Error.message(e));
+      fallbackUsed := true;
+      #Err("xrc unavailable")
+    };
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
