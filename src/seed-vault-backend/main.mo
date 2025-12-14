@@ -423,6 +423,36 @@ persistent actor Self {
     };
   };
 
+  // Attempt to refund previously charged ICP back to the caller's subaccount.
+  private func refundUser(caller : Principal, amount : Nat, context : Text) : async () {
+    if (amount <= ICP_TRANSFER_FEE) {
+      return;
+    };
+
+    let refundable = amount - ICP_TRANSFER_FEE;
+    let toAccount : Account = { owner = Principal.fromActor(Self); subaccount = ?subaccount(caller) };
+
+    try {
+      let result = await ledger().icrc1_transfer({
+        from_subaccount = null;
+        to = toAccount;
+        amount = refundable;
+        fee = ?ICP_TRANSFER_FEE;
+        memo = null;
+        created_at_time = null;
+      });
+
+      switch (result) {
+        case (#Ok(_)) {};
+        case (#Err(err)) {
+          Debug.print("Refund failed (" # context # "): " # debug_show(err));
+        };
+      };
+    } catch (e) {
+      Debug.print("Refund transfer error (" # context # "): " # Error.message(e));
+    };
+  };
+
   private func context(principal : Principal) : Blob {
     let principalBytes : [Nat8] = Blob.toArray(Principal.toBlob(principal));
     let dom : [Nat8] = Blob.toArray(DOMAIN_SEPARATOR);
@@ -596,22 +626,31 @@ persistent actor Self {
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
     let { icp_e8s } = await estimate_cost("derive", 1);
+    var charged = false;
+
     switch (await chargeUser(caller, icp_e8s)) {
       case (#err(msg)) { throw Error.reject(msg) };
-      case (#ok(_)) {};
+      case (#ok(_)) { charged := true };
     };
 
-    let input : Blob = Text.encodeUtf8(name);
-    let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
-      input;
-      context = context(caller);
-      key_id = keyId();
-      transport_public_key;
-    });
+    try {
+      let input : Blob = Text.encodeUtf8(name);
+      let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
+        input;
+        context = context(caller);
+        key_id = keyId();
+        transport_public_key;
+      });
 
-    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-    ignore convertToCycles(amountToConvert);
-    encrypted_key;
+      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+      ignore await convertToCycles(amountToConvert);
+      encrypted_key;
+    } catch (e) {
+      if (charged) {
+        await refundUser(caller, icp_e8s, "derive key: " # Error.message(e));
+      };
+      throw Error.reject("Failed to derive encrypted key");
+    };
   };
 
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
@@ -624,39 +663,60 @@ persistent actor Self {
     if (Blob.toArray(cipher).size() > MAX_SEED_CIPHER_BYTES) {
       return #err("Seed phrase too long. Limit is 420 characters.");
     };
-    let { icp_e8s } = await estimate_cost("encrypt", 1);
-    if (icp_e8s > 0) {
-      switch (await chargeUser(caller, icp_e8s)) {
-        case (#err(msg)) { return #err(msg) };
-        case (#ok(_)) {};
-      };
-      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-      ignore convertToCycles(amountToConvert);
-    };
+
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwner[idx];
         if (hasSeedName(seeds, name)) {
           return #err("Name already exists for this user");
         };
-        let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(name, cipher, iv)]);
-        let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
-          seedsByOwner.size(),
-          func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
-            if (j == idx) {
-              (caller, updatedSeeds)
-            } else {
-              seedsByOwner[j]
-            }
-          },
-        );
-        seedsByOwner := updatedOwners;
       };
-      case null {
-        seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(name, cipher, iv)])]);
+      case null {};
+    };
+
+    let { icp_e8s } = await estimate_cost("encrypt", 1);
+    var charged = false;
+    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+
+    if (icp_e8s > 0) {
+      switch (await chargeUser(caller, icp_e8s)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) { charged := true };
       };
     };
-    #ok(());
+
+    try {
+      switch (findOwnerIndex(caller)) {
+        case (?idx) {
+          let (_, seeds) = seedsByOwner[idx];
+          let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(name, cipher, iv)]);
+          let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
+            seedsByOwner.size(),
+            func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
+              if (j == idx) {
+                (caller, updatedSeeds)
+              } else {
+                seedsByOwner[j]
+              }
+            },
+          );
+          seedsByOwner := updatedOwners;
+        };
+        case null {
+          seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(name, cipher, iv)])]);
+        };
+      };
+
+      if (icp_e8s > 0) {
+        ignore await convertToCycles(amountToConvert);
+      };
+      #ok(());
+    } catch (e) {
+      if (charged) {
+        await refundUser(caller, icp_e8s, "add seed: " # Error.message(e));
+      };
+      #err("Failed to save seed. Please try again.");
+    };
   };
 
   public shared ({ caller }) func delete_seed(name : Text) : async Result.Result<(), Text> {
@@ -686,16 +746,6 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
-    let { icp_e8s } = await estimate_cost("decrypt", 1);
-    if (icp_e8s > 0) {
-      switch (await chargeUser(caller, icp_e8s)) {
-        case (#err(msg)) { return #err(msg) };
-        case (#ok(_)) {};
-      };
-      let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-      ignore convertToCycles(amountToConvert);
-    };
-
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -709,7 +759,29 @@ persistent actor Self {
         };
         switch (found) {
           case null { #err("Seed not found: " # name) };
-          case (?pair) { #ok(pair) };
+          case (?pair) {
+            let { icp_e8s } = await estimate_cost("decrypt", 1);
+            var charged = false;
+            if (icp_e8s > 0) {
+              switch (await chargeUser(caller, icp_e8s)) {
+                case (#err(msg)) { return #err(msg) };
+                case (#ok(_)) { charged := true };
+              };
+            };
+
+            try {
+              if (icp_e8s > 0) {
+                let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+                ignore await convertToCycles(amountToConvert);
+              };
+              #ok(pair);
+            } catch (e) {
+              if (charged) {
+                await refundUser(caller, icp_e8s, "decrypt seed: " # Error.message(e));
+              };
+              #err("Failed to retrieve seed");
+            };
+          };
         };
       };
     };
@@ -719,19 +791,6 @@ persistent actor Self {
     name : Text,
     transport_public_key : Blob,
   ) : async Result.Result<(Blob, Blob, Blob), Text> {
-    let decryptCost = await estimate_cost("decrypt", 1);
-    let deriveCost = await estimate_cost("derive", 1);
-    let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
-
-    if (total > 0) {
-      switch (await chargeUser(caller, total)) {
-        case (#err(msg)) { return #err(msg) };
-        case (#ok(_)) {};
-      };
-      let amountToConvert = if (total > ICP_TO_CYCLES_BUFFER_E8S) { total - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-      ignore convertToCycles(amountToConvert);
-    };
-
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -747,16 +806,40 @@ persistent actor Self {
         switch (found) {
           case null { #err("Seed not found: " # name) };
           case (?pair) {
-            let input : Blob = Text.encodeUtf8(name);
-            let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
-              input;
-              context = context(caller);
-              key_id = keyId();
-              transport_public_key;
-            });
+            let decryptCost = await estimate_cost("decrypt", 1);
+            let deriveCost = await estimate_cost("derive", 1);
+            let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
+            var charged = false;
 
-            let (cipher, iv) = pair;
-            #ok((cipher, iv, encrypted_key));
+            if (total > 0) {
+              switch (await chargeUser(caller, total)) {
+                case (#err(msg)) { return #err(msg) };
+                case (#ok(_)) { charged := true };
+              };
+            };
+
+            try {
+              let input : Blob = Text.encodeUtf8(name);
+              let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
+                input;
+                context = context(caller);
+                key_id = keyId();
+                transport_public_key;
+              });
+
+              if (total > 0) {
+                let amountToConvert = if (total > ICP_TO_CYCLES_BUFFER_E8S) { total - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+                ignore await convertToCycles(amountToConvert);
+              };
+
+              let (cipher, iv) = pair;
+              #ok((cipher, iv, encrypted_key));
+            } catch (e) {
+              if (charged) {
+                await refundUser(caller, total, "decrypt and derive: " # Error.message(e));
+              };
+              #err("Failed to retrieve seed");
+            };
           };
         };
       };

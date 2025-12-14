@@ -193,7 +193,7 @@ function App() {
       });
       setEstimateTimestamp(Date.now());
     } catch (error) {
-      setStatus(`Unable to fetch account details: ${error.message}`);
+      setStatus('Unable to fetch account details. Please try again.');
       setEstimatedCosts(null);
       setEstimateTimestamp(null);
     } finally {
@@ -300,7 +300,7 @@ function App() {
         return retained;
       });
     } catch (error) {
-      setStatus(`Failed to load seeds: ${error.message}`);
+      setStatus('Failed to load seeds. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -376,7 +376,7 @@ function App() {
       backendActor.convert_collected_icp?.().catch(() => {});
       setStatus(`"${seedName}" decrypted successfully.`);
     } catch (error) {
-      setStatus(`Failed to decrypt "${seedName}": ${error.message}`);
+      setStatus(`Failed to decrypt "${seedName}". Please try again.`);
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
@@ -411,7 +411,7 @@ function App() {
       await loadAccount();
       setStatus(`"${seedName}" deleted.`);
     } catch (error) {
-      setStatus(`Failed to delete "${seedName}": ${error.message}`);
+      setStatus(`Failed to delete "${seedName}". Please try again.`);
     } finally {
       setDeletingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
@@ -423,6 +423,10 @@ function App() {
     if (!name || !phrase) return;
     if (phrase.length > MAX_SEED_CHARS) {
       setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
+      return;
+    }
+    if (!/^[a-z\s]+$/i.test(phrase.trim())) {
+      setStatus('Seed phrase should contain only letters and spaces.');
       return;
     }
     setIsAddingSeed(true);
@@ -468,7 +472,7 @@ function App() {
 
       backendActor.convert_collected_icp?.().catch(() => {});
     } catch (error) {
-      setStatus(`Failed to save seed: ${error.message}`);
+      setStatus('Failed to save seed. Please try again.');
     } finally {
       setIsAddingSeed(false);
       setLoading(false);
@@ -527,7 +531,7 @@ function App() {
       setRecipient('');
       setTransferAmount('');
     } catch (error) {
-      setStatus(`Transfer failed: ${error.message}`);
+      setStatus('Transfer failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -762,7 +766,7 @@ function App() {
                                     2000,
                                   );
                                 } catch (error) {
-                                  setStatus(`Failed to copy: ${error.message}`);
+                                  setStatus('Failed to copy. Please try again.');
                                 }
                               }}
                             >
