@@ -195,17 +195,20 @@ persistent actor Self {
     switch (Trie.find(userOps, key, Principal.equal)) {
       case (? (count, lastReset)) {
         if (now - lastReset >= RESET_INTERVAL) {
-          userOps := Trie.put(userOps, key, Principal.equal, (1, now));
+          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
+          userOps := updatedTrie;
           #ok(())
         } else if (count >= RATE_LIMIT) {
           #err("Rate limit exceeded. Try again later.")
         } else {
-          userOps := Trie.put(userOps, key, Principal.equal, (count + 1, lastReset));
+          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (count + 1, lastReset));
+          userOps := updatedTrie;
           #ok(())
         }
       };
       case null {
-        userOps := Trie.put(userOps, key, Principal.equal, (1, now));
+        let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
+        userOps := updatedTrie;
         #ok(())
       };
     }
