@@ -71,9 +71,9 @@ persistent actor Self {
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
   type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
   type Xrc = actor {
-    // XRC exposes `get_exchange_rate` as a query method; declaring it as such here
-    // ensures calls succeed instead of being rejected as updates.
-    get_exchange_rate : shared query (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
+    // XRC is an update call that requires cycles; declaring it as such ensures cycles
+    // are attached and the request is accepted.
+    get_exchange_rate : shared (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
   };
 
   // Call the management canister directly for vetKD.
