@@ -562,7 +562,12 @@ function App() {
       backendActor.convert_collected_icp?.().catch(() => {});
       setStatus(`"${seedName}" decrypted successfully.`);
     } catch (error) {
-      setStatus(`Failed to decrypt "${seedName}". Please try again.`);
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(
+        `Failed to decrypt "${seedName}". ${
+          message ? `Reason: ${message}` : 'Please try again.'
+        }`,
+      );
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
