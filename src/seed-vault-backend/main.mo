@@ -332,16 +332,19 @@ persistent actor Self {
     let fallback_rate : Nat = 4_000_000_000; // Fallback USD per ICP *1e9 (≈4 USD per ICP)
     let balance = ExperimentalCycles.balance();
 
-    var rateResult : XrcGetExchangeRateResult = #Err("xrc unavailable");
-    if (balance >= XRC_CALL_CYCLES) {
-      ExperimentalCycles.add(XRC_CALL_CYCLES);
-      rateResult = try { await XRC.get_exchange_rate(request) } catch (e) {
-        Debug.print("XRC call failed: " # Error.message(e));
+    let rateResult : XrcGetExchangeRateResult =
+      if (balance >= XRC_CALL_CYCLES) {
+        ExperimentalCycles.add(XRC_CALL_CYCLES);
+        try {
+          await XRC.get_exchange_rate(request)
+        } catch (e) {
+          Debug.print("XRC call failed: " # Error.message(e));
+          #Err("xrc unavailable")
+        }
+      } else {
+        Debug.print("Insufficient cycles to call XRC; using cached/fallback rate.");
         #Err("xrc unavailable")
       };
-    } else {
-      Debug.print("Insufficient cycles to call XRC; using cached/fallback rate.");
-    };
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
