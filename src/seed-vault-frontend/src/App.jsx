@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
+import CryptoJS from 'crypto-js';
 import { seed_vault_backend, createActor } from 'declarations/seed-vault-backend';
 import { DerivedPublicKey, EncryptedVetKey, TransportSecretKey } from '@dfinity/vetkeys';
 
@@ -32,9 +33,6 @@ function formatIcp(e8s) {
 }
 
 async function computeAccountId(canisterPrincipal, subaccountBytes) {
-  if (typeof crypto === 'undefined' || !crypto.subtle) {
-    throw new Error('WebCrypto unavailable');
-  }
   const owner = Principal.fromText(canisterPrincipal);
   const ownerBytes = owner.toUint8Array();
   const sub = new Uint8Array(32);
@@ -50,8 +48,21 @@ async function computeAccountId(canisterPrincipal, subaccountBytes) {
   data.set(ownerBytes, 1 + domainBuffer.length);
   data.set(sub, 1 + domainBuffer.length + ownerBytes.length);
 
-  const hashBuffer = await crypto.subtle.digest('SHA-224', data);
-  const hashBytes = new Uint8Array(hashBuffer);
+  let hashBytes;
+  try {
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      throw new Error('WebCrypto unavailable');
+    }
+    const hashBuffer = await crypto.subtle.digest('SHA-224', data);
+    hashBytes = new Uint8Array(hashBuffer);
+  } catch (_) {
+    const hashHex = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data)).toString(CryptoJS.enc.Hex);
+    const bytes = new Uint8Array(hashHex.length / 2);
+    for (let i = 0; i < hashHex.length; i += 2) {
+      bytes[i / 2] = parseInt(hashHex.substr(i, 2), 16);
+    }
+    hashBytes = bytes;
+  }
   let checksum = 0xffffffff;
   for (let i = 0; i < hashBytes.length; i += 1) {
     checksum = CRC32_TABLE[(checksum ^ hashBytes[i]) & 0xff] ^ (checksum >>> 8);
