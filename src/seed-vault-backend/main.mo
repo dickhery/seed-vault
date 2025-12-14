@@ -133,9 +133,12 @@ persistent actor Self {
   let MAX_SEEDS_PER_USER : Nat = 50;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
-  // Use the documented maximum XRC cost so we attempt live pricing whenever
-  // possible instead of requiring 1B cycles on hand before making the call.
-  let XRC_CALL_CYCLES : Nat = 500_000_000;
+  // The XRC requires at least 1B cycles to be attached to each request. Keep a
+  // small buffer above that to avoid transient `NotEnoughCycles` rejections on
+  // saturated replicas. This improves the likelihood of live pricing succeeding
+  // across environments, including mobile browsers that rely on the same
+  // backend canister state.
+  let XRC_CALL_CYCLES : Nat = 1_100_000_000;
   // Match the cycles attached in vetkd_derive_key so pricing reflects the
   // actual derivation cost instead of an inflated estimate.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;

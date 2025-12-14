@@ -166,7 +166,9 @@ function App() {
 
   const isSecureContext = useMemo(() => {
     if (typeof window === 'undefined') return true;
-    return window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+    if (window.isSecureContext) return true;
+    const { protocol, hostname } = window.location;
+    return protocol === 'https:' || hostname === 'localhost' || hostname === '127.0.0.1';
   }, []);
 
   const backendActor = useMemo(() => {
@@ -228,6 +230,15 @@ function App() {
       loadAccount();
     }, 300000);
 
+    // If we are stuck on fallback pricing (likely because a previous XRC call failed),
+    // retry more aggressively so live exchange rates can recover once the canister has
+    // enough cycles or connectivity.
+    const pricingInterval = setInterval(() => {
+      if (usingFallbackPricing) {
+        loadAccount();
+      }
+    }, 60000);
+
     const handleFocus = () => {
       loadAccount();
     };
@@ -236,9 +247,10 @@ function App() {
 
     return () => {
       clearInterval(interval);
+      clearInterval(pricingInterval);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [identity, backendActor]);
+  }, [identity, backendActor, usingFallbackPricing]);
 
   useEffect(() => {
     if (!identity) return undefined;
@@ -264,6 +276,11 @@ function App() {
   }, [identity]);
 
   async function login() {
+    if (!isSecureContext) {
+      setStatus('Login requires HTTPS or localhost to enable WebAuthn. Please reopen the app over HTTPS.');
+      return;
+    }
+
     const authClient = await AuthClient.create();
     await authClient.login({
       identityProvider: II_URL,
@@ -759,7 +776,16 @@ function App() {
               <button onClick={logout}>Logout</button>
             </>
           ) : (
-            <button onClick={login}>Login with Internet Identity</button>
+            <>
+              {!isSecureContext && (
+                <p className="status warning">
+                  WebAuthn is blocked on insecure origins. Open the app via HTTPS or localhost, then try again.
+                </p>
+              )}
+              <button onClick={login} disabled={!isSecureContext}>
+                Login with Internet Identity
+              </button>
+            </>
           )}
         </div>
       </header>
