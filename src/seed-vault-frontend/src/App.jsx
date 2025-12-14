@@ -381,10 +381,12 @@ function App() {
     return new Uint8Array(signature);
   }
 
-  async function deriveAesKeyFromVetKey(vetKeyBytes) {
+  async function deriveAesKeyVariantsFromVetKey(vetKeyBytes) {
     const hashed = new Uint8Array(await crypto.subtle.digest('SHA-256', vetKeyBytes));
     const expanded = await hkdfExpand(hashed, 'aes-256-gcm-seed-vault');
-    return expanded.subarray(0, 32);
+    const primary = expanded.subarray(0, 32);
+    const legacy = hashed.subarray(0, 32);
+    return { primary, legacy };
   }
 
   async function deriveSymmetricKey(seedName) {
@@ -419,7 +421,8 @@ function App() {
             ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
             : new Uint8Array(vetKey);
 
-    return deriveAesKeyFromVetKey(vetKeyBytes);
+    const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
+    return primary;
   }
 
   async function encrypt(plaintext, key) {
@@ -525,9 +528,22 @@ function App() {
             : ArrayBuffer.isView(vetKey)
               ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
               : new Uint8Array(vetKey);
-      const key = await deriveAesKeyFromVetKey(vetKeyBytes);
+      const { primary, legacy } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
 
-      const phraseText = await decrypt(new Uint8Array(cipher), key, new Uint8Array(iv));
+      let phraseText;
+      try {
+        phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
+      } catch (primaryError) {
+        // Attempt legacy direct-SHA key to allow older ciphertexts to decrypt.
+        try {
+          phraseText = await decrypt(new Uint8Array(cipher), legacy, new Uint8Array(iv));
+          setStatus(
+            `"${seedName}" decrypted with legacy key derivation. Please re-save to upgrade security.`,
+          );
+        } catch (_) {
+          throw primaryError;
+        }
+      }
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
       setHiddenSeeds((prev) => ({ ...prev, [seedName]: false }));
       await loadAccount();
