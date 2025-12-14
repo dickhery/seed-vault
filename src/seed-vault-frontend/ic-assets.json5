@@ -1,0 +1,12 @@
+[
+  {
+    "match": "**/*",
+    "security_policy": "hardened",
+    "disable_security_policy_warning": true,
+    "allow_raw_access": false,
+    "headers": {
+      "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://ic0.app https://icp0.io https://identity.ic0.app; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; frame-src 'none';",
+      "Permissions-Policy": "interest-cohort=(), clipboard-write=(self), clipboard-read=(self)"
+    }
+  }
+]
