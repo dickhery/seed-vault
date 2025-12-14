@@ -32,17 +32,7 @@ function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
 }
 
-function wordArrayToUint8Array(wordArray) {
-  const { words, sigBytes } = wordArray;
-  const result = new Uint8Array(sigBytes);
-  for (let i = 0; i < sigBytes; i += 1) {
-    const word = words[i >>> 2];
-    result[i] = (word >>> (24 - (i % 4) * 8)) & 0xff;
-  }
-  return result;
-}
-
-function computeAccountId(canisterPrincipal, subaccountBytes) {
+async function computeAccountId(canisterPrincipal, subaccountBytes) {
   const owner = Principal.fromText(canisterPrincipal);
   const ownerBytes = owner.toUint8Array();
   const sub = new Uint8Array(32);
@@ -58,8 +48,21 @@ function computeAccountId(canisterPrincipal, subaccountBytes) {
   data.set(ownerBytes, 1 + domainBuffer.length);
   data.set(sub, 1 + domainBuffer.length + ownerBytes.length);
 
-  const hash = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data));
-  const hashBytes = wordArrayToUint8Array(hash);
+  let hashBytes;
+  try {
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      throw new Error('WebCrypto unavailable');
+    }
+    const hashBuffer = await crypto.subtle.digest('SHA-224', data);
+    hashBytes = new Uint8Array(hashBuffer);
+  } catch (_) {
+    const hashHex = CryptoJS.SHA224(CryptoJS.lib.WordArray.create(data)).toString(CryptoJS.enc.Hex);
+    const bytes = new Uint8Array(hashHex.length / 2);
+    for (let i = 0; i < hashHex.length; i += 2) {
+      bytes[i / 2] = parseInt(hashHex.substr(i, 2), 16);
+    }
+    hashBytes = bytes;
+  }
   let checksum = 0xffffffff;
   for (let i = 0; i < hashBytes.length; i += 1) {
     checksum = CRC32_TABLE[(checksum ^ hashBytes[i]) & 0xff] ^ (checksum >>> 8);
@@ -116,6 +119,7 @@ function App() {
   const [hiddenSeeds, setHiddenSeeds] = useState({});
   const [estimateTimestamp, setEstimateTimestamp] = useState(null);
   const [isWaiting, setIsWaiting] = useState(false);
+  const [accountId, setAccountId] = useState('');
   const waitingRef = useRef(false);
 
   const isSecureContext = useMemo(() => {
@@ -150,6 +154,32 @@ function App() {
   }, [identity, backendActor]);
 
   useEffect(() => {
+    if (!accountDetails) {
+      setAccountId('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const id = await computeAccountId(accountDetails.canister, accountDetails.subaccount);
+        if (!cancelled) {
+          setAccountId(id);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setAccountId('');
+          setStatus((prev) => prev || 'Unable to compute account ID.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountDetails]);
+
+  useEffect(() => {
     if (!identity) return undefined;
 
     const interval = setInterval(() => {
@@ -167,6 +197,29 @@ function App() {
       window.removeEventListener('focus', handleFocus);
     };
   }, [identity, backendActor]);
+
+  useEffect(() => {
+    if (!identity) return undefined;
+
+    let timeoutId;
+    const resetTimeout = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        logout();
+        setStatus('Logged out after 30 minutes of inactivity for your security.');
+      }, 1800000);
+    };
+
+    resetTimeout();
+    window.addEventListener('mousemove', resetTimeout);
+    window.addEventListener('keydown', resetTimeout);
+
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('mousemove', resetTimeout);
+      window.removeEventListener('keydown', resetTimeout);
+    };
+  }, [identity]);
 
   async function login() {
     const authClient = await AuthClient.create();
@@ -194,6 +247,23 @@ function App() {
     setRecipient('');
     setTransferAmount('');
   }
+
+  useEffect(() => {
+    if (Object.keys(decryptedSeeds).length === 0) return undefined;
+
+    const timer = setTimeout(() => {
+      setHiddenSeeds((prev) => {
+        const updated = { ...prev };
+        Object.keys(decryptedSeeds).forEach((seedName) => {
+          updated[seedName] = true;
+        });
+        return updated;
+      });
+      setStatus('Seeds auto-hidden for security.');
+    }, 300000);
+
+    return () => clearTimeout(timer);
+  }, [decryptedSeeds]);
 
   async function loadAccount() {
     setIsRefreshing(true);
@@ -236,6 +306,9 @@ function App() {
       const details = await backendActor.get_account_details();
       setAccountDetails(details);
       if (Number(details.balance) >= required) {
+        if (Number(details.balance) > required * 1.5) {
+          setStatus('Overpayment detected. Excess will remain in your subaccount.');
+        }
         setPaymentPrompt(null);
         setStatus('Payment received. Proceeding...');
         setIsWaiting(false);
@@ -350,7 +423,7 @@ function App() {
 
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?`,
+        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide after 5 minutes.`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
@@ -449,21 +522,27 @@ function App() {
 
   async function handleAddSeed(event) {
     event.preventDefault();
-    if (!name || !phrase) return;
-    if (name.length > MAX_SEED_NAME_CHARS) {
+    const trimmedName = name.trim();
+    const trimmedPhrase = phrase.trim();
+    if (!trimmedName || !trimmedPhrase) {
+      setStatus('Seed name and phrase are required.');
+      return;
+    }
+    if (trimmedName.length > MAX_SEED_NAME_CHARS) {
       setStatus(`Seed name is too long. Limit is ${MAX_SEED_NAME_CHARS} characters.`);
       return;
     }
-    if (phrase.length > MAX_SEED_CHARS) {
+    if (trimmedPhrase.length > MAX_SEED_CHARS) {
       setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
       return;
     }
-    if (!/^[a-z\s]+$/i.test(phrase.trim())) {
+    if (!/^[a-z\s]+$/i.test(trimmedPhrase)) {
       setStatus('Seed phrase should contain only letters and spaces.');
       return;
     }
-    if (phrase.trim().split(/\s+/).length < 12) {
-      setStatus('Warning: Use at least 12 words for better security.');
+    if (trimmedPhrase.split(/\s+/).length < 12) {
+      setStatus('Seed phrase must contain at least 12 words.');
+      return;
     }
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
@@ -478,7 +557,7 @@ function App() {
       }));
       const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
-        `Saving "${name}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?`,
+        `Saving "${trimmedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer). Continue?`,
       );
       if (!confirmed) {
         setIsAddingSeed(false);
@@ -492,10 +571,10 @@ function App() {
         required,
         `Please transfer at least ${formatIcp(required)} ICP for encryption and key derivation.`,
       );
-      setStatus(`Encrypting and saving "${name}"...`);
-      const key = await deriveSymmetricKey(name);
-      const { cipher, iv } = await encrypt(phrase, key);
-      const result = await backendActor.add_seed(name, cipher, iv);
+      setStatus(`Encrypting and saving "${trimmedName}"...`);
+      const key = await deriveSymmetricKey(trimmedName);
+      const { cipher, iv } = await encrypt(trimmedPhrase, key);
+      const result = await backendActor.add_seed(trimmedName, cipher, iv);
       if ('err' in result) {
         setStatus(result.err);
         return;
@@ -602,7 +681,7 @@ function App() {
                   <p>Deposit ICP to Account ID:</p>
                   <div className="account-id-container">
                     <strong className="account-id">
-                      {computeAccountId(accountDetails.canister, accountDetails.subaccount)}
+                      {accountId || 'Computing...'}
                     </strong>
                     <button
                       type="button"
@@ -612,8 +691,11 @@ function App() {
                           setStatus('Copy is only available over HTTPS or localhost.');
                           return;
                         }
-                        const id = computeAccountId(accountDetails.canister, accountDetails.subaccount);
-                        await navigator.clipboard.writeText(id);
+                        if (!accountId) {
+                          setStatus('Account ID is still computing. Please try again.');
+                          return;
+                        }
+                        await navigator.clipboard.writeText(accountId);
                         setCopyStatus('Copied!');
                         setTimeout(() => setCopyStatus(''), 2000);
                       }}
@@ -791,7 +873,7 @@ function App() {
                   <li key={seedName}>
                     <div className="seed-row">
                       <div>
-                        <p className="seed-name">{seedName}</p>
+                        <p className="seed-name">{seedName.replace(/[<>]/g, '')}</p>
                         {decryptedSeeds[seedName] && (
                           <>
                             <p className="seed-phrase">

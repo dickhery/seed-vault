@@ -168,11 +168,15 @@ persistent actor Self {
     null;
   };
 
+  private func sameName(a : Text, b : Text) : Bool {
+    Text.equal(normalizeName(a), normalizeName(b))
+  };
+
   private func hasSeedName(seeds : [(Text, Blob, Blob)], name : Text) : Bool {
     var i : Nat = 0;
     while (i < seeds.size()) {
       let (n, _, _) = seeds[i];
-      if (Text.equal(n, name)) {
+      if (sameName(n, name)) {
         return true;
       };
       i += 1;
@@ -180,8 +184,17 @@ persistent actor Self {
     false;
   };
 
+  private func normalizeName(name : Text) : Text {
+    Text.trim(name, #predicate(Char.isWhitespace))
+  };
+
   private func isValidSeedName(name : Text) : Bool {
-    let chars = Text.toArray(name);
+    let trimmed = normalizeName(name);
+    if (Text.size(trimmed) == 0) {
+      return false;
+    };
+
+    let chars = Text.toArray(trimmed);
     var i : Nat = 0;
     while (i < chars.size()) {
       let c = chars[i];
@@ -712,10 +725,12 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
-    if (Text.size(name) == 0) {
+    let normalizedName = normalizeName(name);
+
+    if (Text.size(normalizedName) == 0) {
       return #err("Name cannot be empty");
     };
-    if (Text.size(name) > MAX_SEED_NAME_CHARS) {
+    if (Text.size(normalizedName) > MAX_SEED_NAME_CHARS) {
       return #err("Name too long. Maximum 100 characters.");
     };
     if (not isValidSeedName(name)) {
@@ -731,7 +746,7 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwner[idx];
-        if (hasSeedName(seeds, name)) {
+        if (hasSeedName(seeds, normalizedName)) {
           return #err("Name already exists for this user");
         };
       };
@@ -758,7 +773,7 @@ persistent actor Self {
       switch (findOwnerIndex(caller)) {
         case (?idx) {
           let (_, seeds) = seedsByOwner[idx];
-          let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(name, cipher, iv)]);
+          let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(normalizedName, cipher, iv)]);
           let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
             seedsByOwner.size(),
             func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
@@ -772,7 +787,7 @@ persistent actor Self {
           seedsByOwner := updatedOwners;
         };
         case null {
-          seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(name, cipher, iv)])]);
+          seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(normalizedName, cipher, iv)])]);
         };
       };
 
@@ -798,7 +813,7 @@ persistent actor Self {
       case null { #err("No seeds found for this user") };
       case (?idx) {
         let (owner, seeds) = seedsByOwner[idx];
-        let filtered = Array.filter<(Text, Blob, Blob)>(seeds, func((n, _, _)) : Bool { not Text.equal(n, name) });
+        let filtered = Array.filter<(Text, Blob, Blob)>(seeds, func((n, _, _)) : Bool { not sameName(n, name) });
         if (filtered.size() == seeds.size()) {
           return #err("Seed not found: " # name);
         };
@@ -831,7 +846,7 @@ persistent actor Self {
         let (_, seeds) = seedsByOwner[idx];
         var found : ?(Blob, Blob) = null;
         label search for ((n, c, ivVal) in Array.vals(seeds)) {
-          if (Text.equal(n, name)) {
+          if (sameName(n, name)) {
             found := ?(c, ivVal);
             break search;
           };
@@ -881,7 +896,7 @@ persistent actor Self {
         let (_, seeds) = seedsByOwner[idx];
         var found : ?(Blob, Blob) = null;
         label search for ((n, c, ivVal) in Array.vals(seeds)) {
-          if (Text.equal(n, name)) {
+          if (sameName(n, name)) {
             found := ?(c, ivVal);
             break search;
           };
@@ -934,9 +949,13 @@ persistent actor Self {
     ExperimentalCycles.balance()
   };
 
-  // Allow anyone to trigger conversion of accumulated ICP in the default account into cycles
+  // Allow authenticated users to trigger conversion of accumulated ICP in the default account into cycles
   // without blocking user-facing calls.
-  public shared func convert_collected_icp() : async Result.Result<(), Text> {
+  public shared ({ caller }) func convert_collected_icp() : async Result.Result<(), Text> {
+    if (Principal.isAnonymous(caller)) {
+      return #err("Anonymous callers cannot convert ICP");
+    };
+
     let selfPrincipal = Principal.fromActor(Self);
     let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
     let balance = try {
