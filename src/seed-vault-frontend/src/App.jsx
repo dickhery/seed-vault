@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
 import CryptoJS from 'crypto-js';
@@ -21,15 +22,6 @@ const CRC32_TABLE = (() => {
   }
   return table;
 })();
-
-function escapeHtml(unsafe = '') {
-  return unsafe
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 function toHex(bytes = []) {
   return Array.from(bytes)
@@ -320,7 +312,7 @@ function App() {
   useEffect(() => {
     if (Object.keys(decryptedSeeds).length === 0) return undefined;
 
-    const timer = setTimeout(() => {
+    const clearSeeds = () => {
       setHiddenSeeds((prev) => {
         const updated = { ...prev };
         Object.keys(decryptedSeeds).forEach((seedName) => {
@@ -329,10 +321,25 @@ function App() {
         return updated;
       });
       setDecryptedSeeds(() => ({}));
-      setStatus('Decrypted seeds cleared from memory for security.');
-    }, 60000);
+      setStatus('Decrypted seeds cleared from memory after inactivity.');
+    };
 
-    return () => clearTimeout(timer);
+    let timer = setTimeout(clearSeeds, 300000);
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(clearSeeds, 300000);
+    };
+
+    window.addEventListener('mousemove', resetTimer);
+    window.addEventListener('keydown', resetTimer);
+    window.addEventListener('touchstart', resetTimer);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+      window.removeEventListener('touchstart', resetTimer);
+    };
   }, [decryptedSeeds]);
 
   async function loadAccount() {
@@ -1054,7 +1061,7 @@ function App() {
                   <li key={seedName}>
                     <div className="seed-row">
                       <div>
-                        <p className="seed-name">{escapeHtml(seedName)}</p>
+                        <p className="seed-name">{DOMPurify.sanitize(seedName)}</p>
                         {decryptedSeeds[seedName] && (
                           <>
                             <p
@@ -1062,7 +1069,7 @@ function App() {
                               dangerouslySetInnerHTML={{
                                 __html: hiddenSeeds[seedName]
                                   ? '••••••••••••••••••••••••••'
-                                  : escapeHtml(decryptedSeeds[seedName]),
+                                  : DOMPurify.sanitize(decryptedSeeds[seedName]),
                               }}
                             />
                             <button

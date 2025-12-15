@@ -2,7 +2,6 @@ import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Char "mo:base/Char";
 import Error "mo:base/Error";
-import Debug "mo:base/Debug";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
@@ -126,6 +125,7 @@ persistent actor Self {
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let MAX_OPERATION_COST_E8S : Nat = 100_000_000; // Safety cap: 1 ICP
+  let MAX_RATE_DEVIATION_PERCENT : Nat = 20; // Reject fresh rates that drift too far from cached values
   // 420 UTF-8 characters can expand to ~1680 bytes in the worst case; AES-GCM adds
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
@@ -164,8 +164,12 @@ persistent actor Self {
   stable var last_pricing_fallback_used : Bool = false;
   // Track per-user operation counts for rate limiting.
   stable var userOps : Trie.Trie<Principal, (Nat, Int)> = Trie.empty();
+  // Track aggregate operations across all callers to mitigate Sybil-style rate limit bypasses.
+  stable var globalOps : Nat = 0;
+  stable var globalResetNs : Int = 0;
 
   let RATE_LIMIT : Nat = 50; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 500; // overall operations per reset interval
   let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
@@ -237,6 +241,15 @@ persistent actor Self {
   private func checkRateLimit(caller : Principal) : Result.Result<(), Text> {
     let now = Time.now();
     let key = callerKey(caller);
+
+    if (now - globalResetNs >= RESET_INTERVAL) {
+      globalOps := 0;
+      globalResetNs := now;
+    };
+    if (globalOps >= GLOBAL_RATE_LIMIT) {
+      return #err("Global rate limit reached. Please retry after a short pause.");
+    };
+    globalOps += 1;
 
     switch (Trie.find(userOps, key, Principal.equal)) {
       case (? (count, lastReset)) {
@@ -361,10 +374,7 @@ persistent actor Self {
       let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
       let icpBalance = try {
         await ledger().icrc1_balance_of(defaultAccount)
-      } catch (e) {
-        Debug.print("Unable to check ICP balance for auto top-up: " # Error.message(e));
-        0
-      };
+      } catch (_) { 0 };
 
       // Leave the transfer fee untouched so we can pay for the conversion itself.
       if (icpBalance > ICP_TO_CYCLES_BUFFER_E8S) {
@@ -373,9 +383,7 @@ persistent actor Self {
           case (#ok(())) {
             balance := ExperimentalCycles.balance();
           };
-          case (#err(msg)) {
-            Debug.print("Auto-convert for XRC pricing failed: " # msg);
-          };
+          case (#err(_)) {};
         };
       };
     };
@@ -390,8 +398,7 @@ persistent actor Self {
     let rateResult : XrcGetExchangeRateResult = if (to_add > 0) {
       try {
         await XRC.get_exchange_rate(request)
-      } catch (e) {
-        Debug.print("XRC call failed: " # Error.message(e));
+      } catch (_) {
         fallbackUsed := true;
         #Err("xrc unavailable")
       }
@@ -400,14 +407,24 @@ persistent actor Self {
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
-        last_xdr_per_icp_rate := r;
-        last_pricing_fallback_used := false;
+        let accepted = if (last_xdr_per_icp_rate == 0) {
+          r
+        } else {
+          let lowerBound = (last_xdr_per_icp_rate * (100 - MAX_RATE_DEVIATION_PERCENT)) / 100;
+          let upperBound = (last_xdr_per_icp_rate * (100 + MAX_RATE_DEVIATION_PERCENT)) / 100;
+          if (r < lowerBound or r > upperBound) {
+            fallbackUsed := true;
+            last_xdr_per_icp_rate
+          } else {
+            r
+          }
+        };
+        last_xdr_per_icp_rate := accepted;
+        last_pricing_fallback_used := fallbackUsed;
         last_xdr_refresh_ns := now;
-        Debug.print("XRC rate (XDR per ICP *1e9) used: " # Nat.toText(r));
-        r
+        accepted
       };
       case (#Err(_)) {
-        Debug.print("Using cached/fallback XDR rate. Cached: " # Nat.toText(last_xdr_per_icp_rate));
         fallbackUsed := true;
         let rateChoice = if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate };
         if (last_xdr_per_icp_rate == 0) {
@@ -603,13 +620,9 @@ persistent actor Self {
 
       switch (result) {
         case (#Ok(_)) {};
-        case (#Err(err)) {
-          Debug.print("Refund failed (" # context # "): " # debug_show(err));
-        };
+        case (#Err(_)) {};
       };
-    } catch (e) {
-      Debug.print("Refund transfer error (" # context # "): " # Error.message(e));
-    };
+    } catch (_) {};
   };
 
   private func context(principal : Principal) : Blob {
@@ -835,8 +848,6 @@ persistent actor Self {
 
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
     let normalizedName = normalizeName(name);
-    Debug.print("Add seed requested by " # Principal.toText(caller) # " for name '" # normalizedName # "'");
-
     if (Text.size(normalizedName) == 0) {
       return #err("Name cannot be empty");
     };
@@ -925,8 +936,6 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
-    Debug.print("Delete seed requested by " # Principal.toText(caller) # " for name '" # name # "'");
-
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -957,8 +966,6 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
-    Debug.print("Cipher fetch requested by " # Principal.toText(caller) # " for name '" # name # "'");
-
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -1012,8 +1019,6 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
-    Debug.print("Decrypt+derive requested by " # Principal.toText(caller) # " for name '" # name # "'");
-
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {

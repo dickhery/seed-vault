@@ -6,7 +6,8 @@
     "allow_raw_access": false,
     "headers": {
       "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://ic0.app https://icp0.io https://identity.ic0.app; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; style-src 'self'; script-src 'self'; script-src-elem 'self'; frame-src 'none';",
-      "Permissions-Policy": "interest-cohort=(), clipboard-write=(self), clipboard-read=(self)"
+      "Permissions-Policy": "interest-cohort=(), clipboard-write=(self), clipboard-read=(self)",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
     }
   }
 ]
