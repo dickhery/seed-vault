@@ -154,6 +154,11 @@ persistent actor Self {
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
   // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
   stable var last_xdr_per_icp_rate : Nat = 0;
+  // Track when pricing was last refreshed so the frontend can present a meaningful timestamp and we can
+  // opportunistically refresh via heartbeat.
+  stable var last_xdr_refresh_ns : Int = 0;
+  // Whether the most recent pricing refresh had to rely on the fallback rate instead of a live XRC response.
+  stable var last_pricing_fallback_used : Bool = false;
   // Track per-user operation counts for rate limiting.
   stable var userOps : Trie.Trie<Principal, (Nat, Int)> = Trie.empty();
 
@@ -322,11 +327,8 @@ persistent actor Self {
     })
   };
 
-  private func cyclesToIcp(cycles : Nat) : async { icp_e8s : Nat; fallback_used : Bool } {
-    if (cycles == 0) {
-      return { icp_e8s = 0; fallback_used = false };
-    };
-
+  private func refreshXdrRate() : async { rate : Nat; fallback_used : Bool } {
+    let now = Time.now();
     let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
@@ -363,34 +365,69 @@ persistent actor Self {
     };
 
     let to_add = Nat.min(balance, XRC_CALL_CYCLES);
-    ExperimentalCycles.add(to_add);
-    let rateResult : XrcGetExchangeRateResult = try {
-      await XRC.get_exchange_rate(request)
-    } catch (e) {
-      Debug.print("XRC call failed: " # Error.message(e));
+    if (to_add > 0) {
+      ExperimentalCycles.add(to_add);
+    } else {
       fallbackUsed := true;
-      #Err("xrc unavailable")
     };
+
+    let rateResult : XrcGetExchangeRateResult = if (to_add > 0) {
+      try {
+        await XRC.get_exchange_rate(request)
+      } catch (e) {
+        Debug.print("XRC call failed: " # Error.message(e));
+        fallbackUsed := true;
+        #Err("xrc unavailable")
+      }
+    } else { #Err("insufficient cycles to call xrc") };
+
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
         let r = Nat64.toNat(rate);
         last_xdr_per_icp_rate := r;
+        last_pricing_fallback_used := false;
+        last_xdr_refresh_ns := now;
         Debug.print("XRC rate (XDR per ICP *1e9) used: " # Nat.toText(r));
         r
       };
       case (#Err(_)) {
         Debug.print("Using cached/fallback XDR rate. Cached: " # Nat.toText(last_xdr_per_icp_rate));
         fallbackUsed := true;
-        if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate }
+        let rateChoice = if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate };
+        if (last_xdr_per_icp_rate == 0) {
+          last_xdr_per_icp_rate := rateChoice;
+        };
+        last_pricing_fallback_used := true;
+        last_xdr_refresh_ns := now;
+        rateChoice
       };
     };
-    let effectiveRate = if (rateNat == 0) { 1 } else { rateNat };
+    { rate = if (rateNat == 0) { 1 } else { rateNat }; fallback_used = fallbackUsed };
+  };
+
+  private func cyclesToIcp(cycles : Nat) : async { icp_e8s : Nat; fallback_used : Bool } {
+    if (cycles == 0) {
+      return { icp_e8s = 0; fallback_used = false };
+    };
+
+    let { rate; fallback_used } = await refreshXdrRate();
     let numerator : Nat = cycles * 100_000;
-    let baseCost = numerator / effectiveRate;
+    let baseCost = numerator / rate;
     // Add a ~5% buffer to account for execution and rounding without meaningfully
     // overcharging the caller.
     let buffered = (baseCost * 105) / 100;
-    { icp_e8s = buffered + ICP_TO_CYCLES_BUFFER_E8S; fallback_used = fallbackUsed };
+    { icp_e8s = buffered + ICP_TO_CYCLES_BUFFER_E8S; fallback_used };
+  };
+
+  system func heartbeat() : async () {
+    let now = Time.now();
+    if (now - last_xdr_refresh_ns > 300_000_000_000 or last_xdr_per_icp_rate == 0) {
+      try {
+        ignore await refreshXdrRate();
+      } catch (e) {
+        Debug.print("Pricing heartbeat refresh failed: " # Error.message(e));
+      };
+    };
   };
 
   private func operationCycles(operation : Text, count : Nat) : Nat {
@@ -1003,6 +1040,18 @@ persistent actor Self {
 
   public query func canister_cycles() : async Nat {
     ExperimentalCycles.balance()
+  };
+
+  public query func pricing_status() : async {
+    last_rate : Nat;
+    last_refresh_nanoseconds : Int;
+    fallback_used : Bool;
+  } {
+    {
+      last_rate = last_xdr_per_icp_rate;
+      last_refresh_nanoseconds = last_xdr_refresh_ns;
+      fallback_used = last_pricing_fallback_used;
+    }
   };
 
   // Allow authenticated users to trigger conversion of accumulated ICP in the default account into cycles
