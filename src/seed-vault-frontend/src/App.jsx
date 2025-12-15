@@ -253,18 +253,20 @@ function App() {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         logout();
-        setStatus('Logged out after 30 minutes of inactivity for your security.');
-      }, 1800000);
+        setStatus('Logged out after 10 minutes of inactivity for your security.');
+      }, 600000);
     };
 
     resetTimeout();
     window.addEventListener('mousemove', resetTimeout);
     window.addEventListener('keydown', resetTimeout);
+    window.addEventListener('touchstart', resetTimeout);
 
     return () => {
       clearTimeout(timeoutId);
       window.removeEventListener('mousemove', resetTimeout);
       window.removeEventListener('keydown', resetTimeout);
+      window.removeEventListener('touchstart', resetTimeout);
     };
   }, [identity]);
 
@@ -286,6 +288,7 @@ function App() {
       },
       onError: (err) => setStatus(`Login failed. ${err?.message || err}`),
       windowOpenerFeatures: isSafari ? '' : 'left=100,top=100,width=500,height=700',
+      maxTimeToLive: BigInt(15) * BigInt(60) * BigInt(1_000_000_000), // 15 minutes in ns
     };
 
     // Safari (especially on mobile) is more permissive with full-page redirects than popups.
