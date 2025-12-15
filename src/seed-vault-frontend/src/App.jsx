@@ -163,12 +163,34 @@ function App() {
   const [usingFallbackPricing, setUsingFallbackPricing] = useState(false);
   const [accountId, setAccountId] = useState('');
   const waitingRef = useRef(false);
+  const authClientRef = useRef(null);
+  const [isSafari, setIsSafari] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   const isSecureContext = useMemo(() => {
     if (typeof window === 'undefined') return true;
     if (window.isSecureContext) return true;
     const { protocol, hostname } = window.location;
     return protocol === 'https:' || hostname === 'localhost' || hostname === '127.0.0.1';
+  }, []);
+
+  useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      const ua = navigator.userAgent || '';
+      setIsSafari(/safari/i.test(ua) && !/chrome|crios|android/i.test(ua));
+    }
+
+    AuthClient.create({ idleOptions: { disableIdle: true } })
+      .then(async (client) => {
+        authClientRef.current = client;
+        setAuthReady(true);
+        if (await client.isAuthenticated()) {
+          setIdentity(client.getIdentity());
+        }
+      })
+      .catch(() => {
+        setStatus('Unable to initialize authentication. Please reload and try again.');
+      });
   }, []);
 
   const backendActor = useMemo(() => {
@@ -281,19 +303,33 @@ function App() {
       return;
     }
 
-    const authClient = await AuthClient.create();
-    await authClient.login({
+    const client = authClientRef.current || (await AuthClient.create({ idleOptions: { disableIdle: true } }));
+    authClientRef.current = client;
+
+    const loginOptions = {
       identityProvider: II_URL,
       onSuccess: async () => {
-        const loggedInIdentity = authClient.getIdentity();
+        const loggedInIdentity = client.getIdentity();
         setIdentity(loggedInIdentity);
+        setStatus('');
       },
-    });
+      onError: (err) => setStatus(`Login failed. ${err?.message || err}`),
+      windowOpenerFeatures: isSafari ? '' : 'left=100,top=100,width=500,height=700',
+    };
+
+    // Safari (especially on mobile) is more permissive with full-page redirects than popups.
+    if (isSafari) {
+      loginOptions.maxTimeToLive = BigInt(24) * BigInt(60 * 60) * BigInt(1_000_000_000); // 24h in ns
+    }
+
+    await client.login(loginOptions);
   }
 
   async function logout() {
-    const authClient = await AuthClient.create();
-    await authClient.logout();
+    if (!authClientRef.current) {
+      authClientRef.current = await AuthClient.create({ idleOptions: { disableIdle: true } });
+    }
+    await authClientRef.current.logout();
     setIdentity(null);
     setSeedNames([]);
     setDecryptedSeeds({});
@@ -331,6 +367,9 @@ function App() {
       setAccountDetails(details);
       const cycles = await backendActor.canister_cycles();
       setCanisterCycles(Number(cycles));
+      const pricingSnapshot = backendActor.pricing_status
+        ? await backendActor.pricing_status()
+        : null;
       const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
         backendActor.estimate_cost('encrypt', 1),
         backendActor.estimate_cost('decrypt', 1),
@@ -342,9 +381,13 @@ function App() {
         encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
         decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
       });
-      setEstimateTimestamp(Date.now());
-      setUsingFallbackPricing(Boolean(fallback));
-      if (fallback) {
+      const refreshedAt = pricingSnapshot?.last_refresh_nanoseconds
+        ? Number(pricingSnapshot.last_refresh_nanoseconds / 1_000_000)
+        : Date.now();
+      setEstimateTimestamp(refreshedAt);
+      const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
+      setUsingFallbackPricing(usedFallback);
+      if (usedFallback) {
         setStatus('Using fallback pricing. Costs may shift once live rates are available.');
       }
     } catch (error) {
@@ -782,7 +825,7 @@ function App() {
                   WebAuthn is blocked on insecure origins. Open the app via HTTPS or localhost, then try again.
                 </p>
               )}
-              <button onClick={login} disabled={!isSecureContext}>
+              <button onClick={login} disabled={!isSecureContext || !authReady}>
                 Login with Internet Identity
               </button>
             </>
