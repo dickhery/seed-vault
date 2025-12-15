@@ -811,6 +811,18 @@ function App() {
         <div>
           <h1>Seed Vault</h1>
           <p>Store and decrypt your seed phrases securely with vetKeys and AES-GCM.</p>
+          <p>
+            For questions or more details, see the README in our
+            {' '}
+            <a
+              href="https://github.com/dickhery/seed-vault"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GitHub repository
+            </a>
+            . Feel free to examine the code or deploy your own version.
+          </p>
         </div>
         <div className="auth">
           {identity ? (
