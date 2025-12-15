@@ -152,7 +152,7 @@ function App() {
   const [deletingSeeds, setDeletingSeeds] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
-  const [estimatedCosts, setEstimatedCosts] = useState(null);
+  const [estimatedCost, setEstimatedCost] = useState(null);
   const [copyStatuses, setCopyStatuses] = useState({});
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [recipient, setRecipient] = useState('');
@@ -305,7 +305,7 @@ function App() {
     setSeedNames([]);
     setDecryptedSeeds({});
     setAccountDetails(null);
-    setEstimatedCosts(null);
+    setEstimatedCost(null);
     setEstimateTimestamp(null);
     setCopyStatus('');
     setCopyStatuses({});
@@ -351,14 +351,6 @@ function App() {
         hadError = true;
       }
 
-      let pricingSnapshot = null;
-      try {
-        pricingSnapshot = backendActor.pricing_status ? await backendActor.pricing_status() : null;
-      } catch (error) {
-        console.error('pricing_status failed', error);
-        hadError = true;
-      }
-
       try {
         const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
           backendActor.estimate_cost('encrypt', 1),
@@ -367,13 +359,28 @@ function App() {
         ]);
         const fallback =
           encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-        setEstimatedCosts({
-          encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-          decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-        });
-        const refreshedAt = pricingSnapshot?.last_refresh_nanoseconds
-          ? Number(pricingSnapshot.last_refresh_nanoseconds / 1_000_000)
-          : Date.now();
+        const costE8s = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+        setEstimatedCost(formatIcp(costE8s));
+
+        let pricingSnapshot = null;
+        try {
+          pricingSnapshot = backendActor.pricing_status ? await backendActor.pricing_status() : null;
+        } catch (error) {
+          console.error('pricing_status failed', error);
+          hadError = true;
+        }
+
+        const refreshedAtNs = pricingSnapshot?.last_refresh_nanoseconds;
+        let refreshedAt;
+        if (typeof refreshedAtNs === 'bigint') {
+          refreshedAt = Number(refreshedAtNs / 1_000_000n);
+        } else if (typeof refreshedAtNs === 'number') {
+          refreshedAt = Math.floor(refreshedAtNs / 1_000_000);
+        } else if (refreshedAtNs !== undefined && refreshedAtNs !== null) {
+          refreshedAt = Number(refreshedAtNs) / 1_000_000;
+        } else {
+          refreshedAt = Date.now();
+        }
         setEstimateTimestamp(refreshedAt);
         const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
         setUsingFallbackPricing(usedFallback);
@@ -545,11 +552,6 @@ function App() {
       ]);
       const fallback =
         encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      setEstimatedCosts({
-        encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-        decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-      });
-
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
         `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
@@ -701,10 +703,6 @@ function App() {
         backendActor.estimate_cost('derive', 1),
       ]);
       const fallback = encryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      setEstimatedCosts((current) => ({
-        ...current,
-        encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-      }));
       const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
         `Saving "${trimmedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
@@ -877,12 +875,8 @@ function App() {
                   <div>
                       <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
                       <p className="muted">
-                        Estimated cost per encrypt: ~
-                        {estimatedCosts?.encrypt ? `${estimatedCosts.encrypt} ICP` : 'loading...'}
-                      </p>
-                      <p className="muted">
-                        Estimated cost per decrypt: ~
-                        {estimatedCosts?.decrypt ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
+                        Estimated cost per encrypt/decrypt: ~
+                        {estimatedCost ? `${estimatedCost} ICP` : 'loading...'}
                       </p>
                     <p className="muted">
                       Last refreshed:{' '}
