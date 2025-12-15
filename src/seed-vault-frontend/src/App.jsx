@@ -370,9 +370,17 @@ function App() {
           hadError = true;
         }
 
-        const refreshedAt = pricingSnapshot?.last_refresh_nanoseconds
-          ? Number(pricingSnapshot.last_refresh_nanoseconds / 1_000_000)
-          : Date.now();
+        const refreshedAtNs = pricingSnapshot?.last_refresh_nanoseconds;
+        let refreshedAt;
+        if (typeof refreshedAtNs === 'bigint') {
+          refreshedAt = Number(refreshedAtNs / 1_000_000n);
+        } else if (typeof refreshedAtNs === 'number') {
+          refreshedAt = Math.floor(refreshedAtNs / 1_000_000);
+        } else if (refreshedAtNs !== undefined && refreshedAtNs !== null) {
+          refreshedAt = Number(refreshedAtNs) / 1_000_000;
+        } else {
+          refreshedAt = Date.now();
+        }
         setEstimateTimestamp(refreshedAt);
         const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
         setUsingFallbackPricing(usedFallback);
