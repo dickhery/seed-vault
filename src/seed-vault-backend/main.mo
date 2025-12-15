@@ -133,6 +133,8 @@ persistent actor Self {
   let MAX_SEEDS_PER_USER : Nat = 50;
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
+  let PRICING_REFRESH_INTERVAL_NS : Int = 300_000_000_000; // 5 minutes
+  let FALLBACK_RETRY_INTERVAL_NS : Int = 60_000_000_000; // 1 minute between fallback retries
   // The XRC requires at least 1B cycles to be attached to each request. Keep a
   // small buffer above that to avoid transient `NotEnoughCycles` rejections on
   // saturated replicas. This improves the likelihood of live pricing succeeding
@@ -155,7 +157,7 @@ persistent actor Self {
   // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
   stable var last_xdr_per_icp_rate : Nat = 0;
   // Track when pricing was last refreshed so the frontend can present a meaningful timestamp and we can
-  // opportunistically refresh via heartbeat.
+  // throttle exchange-rate lookups to avoid unnecessary XRC calls.
   stable var last_xdr_refresh_ns : Int = 0;
   // Whether the most recent pricing refresh had to rely on the fallback rate instead of a live XRC response.
   stable var last_pricing_fallback_used : Bool = false;
@@ -329,6 +331,19 @@ persistent actor Self {
 
   private func refreshXdrRate() : async { rate : Nat; fallback_used : Bool } {
     let now = Time.now();
+
+    if (last_xdr_per_icp_rate != 0) {
+      let sinceLast = now - last_xdr_refresh_ns;
+
+      if (not last_pricing_fallback_used and sinceLast < PRICING_REFRESH_INTERVAL_NS) {
+        return { rate = last_xdr_per_icp_rate; fallback_used = last_pricing_fallback_used };
+      };
+
+      if (last_pricing_fallback_used and sinceLast < FALLBACK_RETRY_INTERVAL_NS) {
+        return { rate = last_xdr_per_icp_rate; fallback_used = true };
+      };
+    };
+
     let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
@@ -417,17 +432,6 @@ persistent actor Self {
     // overcharging the caller.
     let buffered = (baseCost * 105) / 100;
     { icp_e8s = buffered + ICP_TO_CYCLES_BUFFER_E8S; fallback_used };
-  };
-
-  system func heartbeat() : async () {
-    let now = Time.now();
-    if (now - last_xdr_refresh_ns > 300_000_000_000 or last_xdr_per_icp_rate == 0) {
-      try {
-        ignore await refreshXdrRate();
-      } catch (e) {
-        Debug.print("Pricing heartbeat refresh failed: " # Error.message(e));
-      };
-    };
   };
 
   private func operationCycles(operation : Text, count : Nat) : Nat {
