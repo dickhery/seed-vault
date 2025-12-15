@@ -69,7 +69,7 @@ Imagine your seed phrase is a secret message. Instead of storing it openly (risk
   - Client generates a temporary "transport" key pair.
   - Derived key is encrypted under your transport public key and sent back.
   - Client verifies and decrypts it.
-- For more, see [vetKeys Documentation](https://internetcomputer.org/docs/current/developer-docs/integrations/vetkeys/) and [How vetKeys Work](https://internetcomputer.org/docs/current/references/vetkeys/how-vetkeys-work).
+- For more, see [vetKeys Documentation](https://internetcomputer.org/docs/current/developer-docs/integrations/vetkeys/) and [How vetKeys Work](https://internetcomputer.org/docs/references/vetkeys-overview).
 
 ### Encryption/Decryption
 - **Algorithm**: AES-GCM (256-bit key) for symmetric encryption—industry-standard, fast, and secure.
@@ -92,7 +92,7 @@ Imagine your seed phrase is a secret message. Instead of storing it openly (risk
   - **Idle Risks**: Auto-logout after 10 min inactivity.
 - **Limitations**: Browser security matters (use trusted devices, avoid phishing). Not for ultra-high-value assets—pair with hardware wallets.
 
-For a similar app tutorial, see [Encrypted Notes Tutorial](https://internetcomputer.org/docs/current/tutorials/developer-journey/level-4/4.3-vetkeys-encrypted-notes/).
+For a similar app tutorial, see [Encrypted Notes Tutorial](https://internetcomputer.org/docs/tutorials/developer-liftoff/level-5/5.1-vetKeys-tutorial).
 
 ## Dynamic Pricing
 Pricing ensures the backend canister always has cycles for operations. It's "dynamic" because ICP costs adjust with market exchange rates (ICP/XDR from XRC canister).
