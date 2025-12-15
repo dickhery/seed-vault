@@ -362,39 +362,63 @@ function App() {
 
   async function loadAccount() {
     setIsRefreshing(true);
+    let hadError = false;
     try {
-      const details = await backendActor.get_account_details();
-      setAccountDetails(details);
-      const cycles = await backendActor.canister_cycles();
-      setCanisterCycles(Number(cycles));
-      const pricingSnapshot = backendActor.pricing_status
-        ? await backendActor.pricing_status()
-        : null;
-      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
-        backendActor.estimate_cost('encrypt', 1),
-        backendActor.estimate_cost('decrypt', 1),
-        backendActor.estimate_cost('derive', 1),
-      ]);
-      const fallback =
-        encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      setEstimatedCosts({
-        encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-        decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-      });
-      const refreshedAt = pricingSnapshot?.last_refresh_nanoseconds
-        ? Number(pricingSnapshot.last_refresh_nanoseconds / 1_000_000)
-        : Date.now();
-      setEstimateTimestamp(refreshedAt);
-      const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
-      setUsingFallbackPricing(usedFallback);
-      if (usedFallback) {
-        setStatus('Using fallback pricing. Costs may shift once live rates are available.');
+      try {
+        const details = await backendActor.get_account_details();
+        setAccountDetails(details);
+      } catch (error) {
+        console.error('get_account_details failed', error);
+        hadError = true;
+      }
+
+      try {
+        const cycles = await backendActor.canister_cycles();
+        setCanisterCycles(Number(cycles));
+      } catch (error) {
+        console.error('canister_cycles failed', error);
+        hadError = true;
+      }
+
+      let pricingSnapshot = null;
+      try {
+        pricingSnapshot = backendActor.pricing_status ? await backendActor.pricing_status() : null;
+      } catch (error) {
+        console.error('pricing_status failed', error);
+        hadError = true;
+      }
+
+      try {
+        const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
+          backendActor.estimate_cost('encrypt', 1),
+          backendActor.estimate_cost('decrypt', 1),
+          backendActor.estimate_cost('derive', 1),
+        ]);
+        const fallback =
+          encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+        setEstimatedCosts({
+          encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
+          decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
+        });
+        const refreshedAt = pricingSnapshot?.last_refresh_nanoseconds
+          ? Number(pricingSnapshot.last_refresh_nanoseconds / 1_000_000)
+          : Date.now();
+        setEstimateTimestamp(refreshedAt);
+        const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
+        setUsingFallbackPricing(usedFallback);
+        if (usedFallback) {
+          setStatus('Using fallback pricing. Costs may shift once live rates are available.');
+        }
+      } catch (error) {
+        console.error('estimate_cost failed', error);
+        hadError = true;
+      }
+
+      if (hadError) {
+        setStatus((prev) => prev || 'Some data may be stale. Please refresh to retry.');
       }
     } catch (error) {
       setStatus('Unable to fetch account details. Please try again.');
-      setEstimatedCosts(null);
-      setEstimateTimestamp(null);
-      setUsingFallbackPricing(false);
     } finally {
       setIsRefreshing(false);
     }
@@ -541,15 +565,17 @@ function App() {
     setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
     setStatus(`Preparing to decrypt "${seedName}"...`);
     try {
-      const [decryptEstimate, deriveEstimate] = await Promise.all([
+      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('encrypt', 1),
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
-      const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      setEstimatedCosts((current) => ({
-        ...current,
+      const fallback =
+        encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+      setEstimatedCosts({
+        encrypt: formatIcp(Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
         decrypt: formatIcp(Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S),
-      }));
+      });
 
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(
@@ -876,15 +902,15 @@ function App() {
                 <details>
                   <summary>View pricing info</summary>
                   <div>
-                    <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
-                    <p className="muted">
-                      Estimated cost per encrypt: ~
-                      {estimatedCosts ? `${estimatedCosts.encrypt} ICP` : 'loading...'}
-                    </p>
-                    <p className="muted">
-                      Estimated cost per decrypt: ~
-                      {estimatedCosts ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
-                    </p>
+                      <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
+                      <p className="muted">
+                        Estimated cost per encrypt: ~
+                        {estimatedCosts?.encrypt ? `${estimatedCosts.encrypt} ICP` : 'loading...'}
+                      </p>
+                      <p className="muted">
+                        Estimated cost per decrypt: ~
+                        {estimatedCosts?.decrypt ? `${estimatedCosts.decrypt} ICP` : 'loading...'}
+                      </p>
                     <p className="muted">
                       Last refreshed:{' '}
                       {estimateTimestamp
