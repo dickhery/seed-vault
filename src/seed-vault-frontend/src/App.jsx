@@ -248,35 +248,6 @@ function App() {
   useEffect(() => {
     if (!identity) return undefined;
 
-    const interval = setInterval(() => {
-      loadAccount();
-    }, 300000);
-
-    // If we are stuck on fallback pricing (likely because a previous XRC call failed),
-    // retry more aggressively so live exchange rates can recover once the canister has
-    // enough cycles or connectivity.
-    const pricingInterval = setInterval(() => {
-      if (usingFallbackPricing) {
-        loadAccount();
-      }
-    }, 60000);
-
-    const handleFocus = () => {
-      loadAccount();
-    };
-
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      clearInterval(interval);
-      clearInterval(pricingInterval);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [identity, backendActor, usingFallbackPricing]);
-
-  useEffect(() => {
-    if (!identity) return undefined;
-
     let timeoutId;
     const resetTimeout = () => {
       clearTimeout(timeoutId);
@@ -407,7 +378,9 @@ function App() {
         const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
         setUsingFallbackPricing(usedFallback);
         if (usedFallback) {
-          setStatus('Using fallback pricing. Costs may shift once live rates are available.');
+          setStatus(
+            'Using fallback pricing. Costs may shift once live rates are available—refresh before paying.',
+          );
         }
       } catch (error) {
         console.error('estimate_cost failed', error);
@@ -923,7 +896,8 @@ function App() {
                     </p>
                     {usingFallbackPricing && (
                       <p className="status warning">
-                        Live exchange rate unavailable; using fallback pricing until the canister refreshes.
+                        Live exchange rate unavailable; showing the last known estimate. Use "Refresh balance &
+                        cycles" to retry live pricing before paying.
                       </p>
                     )}
                   </div>
