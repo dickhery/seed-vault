@@ -125,6 +125,7 @@ persistent actor Self {
   let ICP_TRANSFER_FEE : Nat = 10_000;
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
+  let MAX_OPERATION_COST_E8S : Nat = 100_000_000; // Safety cap: 1 ICP
   // 420 UTF-8 characters can expand to ~1680 bytes in the worst case; AES-GCM adds
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
@@ -446,6 +447,14 @@ persistent actor Self {
     };
   };
 
+  private func assertCostWithinLimit(icp_e8s : Nat) : Result.Result<(), Text> {
+    if (icp_e8s > MAX_OPERATION_COST_E8S) {
+      #err("Estimated cost exceeds safety cap. Please retry later or contact support.")
+    } else {
+      #ok(())
+    }
+  };
+
   // Convert collected ICP into cycles by sending ICP to the CMC and notifying it,
   // then withdrawing the minted cycles from the cycles ledger back into this canister.
   private func convertToCycles(amount : Nat) : async Result.Result<(), Text> {
@@ -760,7 +769,13 @@ persistent actor Self {
 
     let cycles = operationCycles(operation, count);
     let { icp_e8s; fallback_used } = await cyclesToIcp(cycles);
-    { cycles; icp_e8s; fallback_used };
+    var capped = icp_e8s;
+    var fallback = fallback_used;
+    if (icp_e8s > MAX_OPERATION_COST_E8S) {
+      capped := MAX_OPERATION_COST_E8S;
+      fallback := true;
+    };
+    { cycles; icp_e8s = capped; fallback_used = fallback };
   };
 
   public query ({ caller }) func seed_count() : async Nat {
@@ -787,6 +802,10 @@ persistent actor Self {
     };
 
     let { icp_e8s } = await estimate_cost("derive", 1);
+    switch (assertCostWithinLimit(icp_e8s)) {
+      case (#err(msg)) { throw Error.reject(msg) };
+      case (#ok(())) {};
+    };
     var charged = false;
 
     switch (await chargeUser(caller, icp_e8s)) {
@@ -853,6 +872,10 @@ persistent actor Self {
     };
 
     let { icp_e8s } = await estimate_cost("encrypt", 1);
+    switch (assertCostWithinLimit(icp_e8s)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
     var charged = false;
     let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
 
@@ -951,6 +974,10 @@ persistent actor Self {
           case null { #err("Seed not found: " # name) };
           case (?pair) {
             let { icp_e8s } = await estimate_cost("decrypt", 1);
+            switch (assertCostWithinLimit(icp_e8s)) {
+              case (#err(msg)) { return #err(msg) };
+              case (#ok(())) {};
+            };
             var charged = false;
             if (icp_e8s > 0) {
               switch (await chargeUser(caller, icp_e8s)) {
@@ -1005,6 +1032,10 @@ persistent actor Self {
             let decryptCost = await estimate_cost("decrypt", 1);
             let deriveCost = await estimate_cost("derive", 1);
             let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
+            switch (assertCostWithinLimit(total)) {
+              case (#err(msg)) { return #err(msg) };
+              case (#ok(())) {};
+            };
             var charged = false;
 
             if (total > 0) {

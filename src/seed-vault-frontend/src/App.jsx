@@ -328,8 +328,9 @@ function App() {
         });
         return updated;
       });
-      setStatus('Seeds auto-hidden for security.');
-    }, 300000);
+      setDecryptedSeeds(() => ({}));
+      setStatus('Decrypted seeds cleared from memory for security.');
+    }, 60000);
 
     return () => clearTimeout(timer);
   }, [decryptedSeeds]);
@@ -559,11 +560,20 @@ function App() {
       const confirmed = window.confirm(
         `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
           fallback ? ' (Using fallback exchange rate estimate.)' : ''
-        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide after 5 minutes.`,
+        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 1 minute.`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
         setStatus('');
+        return;
+      }
+
+      const securityConfirmed = window.confirm(
+        'For your safety, decrypt only on a trusted device and private network. Proceed with decryption?',
+      );
+      if (!securityConfirmed) {
+        setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
+        setStatus('Decryption cancelled.');
         return;
       }
 
@@ -603,22 +613,8 @@ function App() {
             : ArrayBuffer.isView(vetKey)
               ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
               : new Uint8Array(vetKey);
-      const { primary, legacy } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
-
-      let phraseText;
-      try {
-        phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
-      } catch (primaryError) {
-        // Attempt legacy direct-SHA key to allow older ciphertexts to decrypt.
-        try {
-          phraseText = await decrypt(new Uint8Array(cipher), legacy, new Uint8Array(iv));
-          setStatus(
-            `"${seedName}" decrypted with legacy key derivation. Please re-save to upgrade security.`,
-          );
-        } catch (_) {
-          throw primaryError;
-        }
-      }
+      const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
+      const phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
       setHiddenSeeds((prev) => ({ ...prev, [seedName]: false }));
       await loadAccount();
@@ -687,6 +683,10 @@ function App() {
     }
     if (words.length < 12 || words.length > 24 || !words.every((word) => /^[a-z]+$/.test(word))) {
       setStatus('Seed phrase must be 12-24 lowercase words.');
+      return;
+    }
+    if (words.some((word) => word.length < 3 || word.length > 20)) {
+      setStatus('Each word should be between 3 and 20 characters.');
       return;
     }
     setIsAddingSeed(true);
@@ -1057,9 +1057,14 @@ function App() {
                         <p className="seed-name">{escapeHtml(seedName)}</p>
                         {decryptedSeeds[seedName] && (
                           <>
-                            <p className="seed-phrase">
-                              {hiddenSeeds[seedName] ? '••••••••••••••••••••••••••' : decryptedSeeds[seedName]}
-                            </p>
+                            <p
+                              className="seed-phrase"
+                              dangerouslySetInnerHTML={{
+                                __html: hiddenSeeds[seedName]
+                                  ? '••••••••••••••••••••••••••'
+                                  : escapeHtml(decryptedSeeds[seedName]),
+                              }}
+                            />
                             <button
                               type="button"
                               className="hide-button"
@@ -1084,7 +1089,7 @@ function App() {
                                 }
 
                                 const confirmed = window.confirm(
-                                  'Warning: Copying exposes the seed phrase to your clipboard. Continue?',
+                                  'Warning: Copying exposes the seed phrase to your clipboard and other apps or extensions may read it. Only continue on a trusted device.',
                                 );
                                 if (!confirmed) {
                                   setStatus('Copy cancelled.');
@@ -1098,6 +1103,9 @@ function App() {
                                     () => setCopyStatuses((prev) => ({ ...prev, [seedName]: '' })),
                                     2000,
                                   );
+                                  setTimeout(() => {
+                                    navigator.clipboard.writeText('').catch(() => {});
+                                  }, 10000);
                                 } catch (error) {
                                   setStatus('Failed to copy. Please try again.');
                                 }
