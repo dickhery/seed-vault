@@ -769,7 +769,7 @@ persistent actor Self {
 
     let cycles = operationCycles(operation, count);
     let { icp_e8s; fallback_used } = await cyclesToIcp(cycles);
-    let capped = icp_e8s;
+    var capped = icp_e8s;
     var fallback = fallback_used;
     if (icp_e8s > MAX_OPERATION_COST_E8S) {
       capped := MAX_OPERATION_COST_E8S;
