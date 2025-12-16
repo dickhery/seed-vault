@@ -147,6 +147,18 @@ function App() {
   const authClientRef = useRef(null);
   const [isSafari, setIsSafari] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const rawAccessUrl = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const frontendId = process.env.CANISTER_ID_SEED_VAULT_FRONTEND;
+    if (!frontendId) return null;
+    const { pathname, search, hash } = window.location;
+    return `https://${frontendId}.raw.icp0.io${pathname}${search}${hash}`;
+  }, []);
+  const isRawDomain = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const host = window.location.hostname || '';
+    return host.endsWith('.raw.icp0.io') || host.endsWith('.raw.ic0.app');
+  }, []);
 
   const isSecureContext = useMemo(() => {
     if (typeof window === 'undefined') return true;
@@ -537,6 +549,15 @@ function App() {
       return;
     }
     const normalizedName = validation.value;
+    if (!isRawDomain && typeof window !== 'undefined') {
+      const rawConfirmed = window.confirm(
+        'For stronger integrity, decrypt from the raw.icp0.io domain to avoid boundary node tampering. Continue here? The notice above links to the raw domain.',
+      );
+      if (!rawConfirmed) {
+        setStatus('Decryption cancelled. Open the raw.icp0.io link above for a hardened path.');
+        return;
+      }
+    }
     setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
     setStatus(`Preparing to decrypt "${normalizedName}"...`);
     try {
@@ -687,6 +708,15 @@ function App() {
     if (/\s{4,}/.test(trimmedPhrase)) {
       setStatus('Seed phrase or password contains excessive whitespace. Please review.');
       return;
+    }
+    if (!isRawDomain && typeof window !== 'undefined') {
+      const rawConfirmed = window.confirm(
+        'For stronger integrity guarantees, save secrets from the raw.icp0.io domain linked above to avoid boundary node tampering. Continue here?',
+      );
+      if (!rawConfirmed) {
+        setStatus('Save cancelled. Open the raw.icp0.io link above for a hardened path.');
+        return;
+      }
     }
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
@@ -840,6 +870,16 @@ function App() {
           )}
         </div>
       </header>
+
+      {identity && !isRawDomain && rawAccessUrl && (
+        <div className="status warning security-banner">
+          For maximum security, open the app via{' '}
+          <a href={rawAccessUrl} target="_blank" rel="noopener noreferrer">
+            the raw.icp0.io domain
+          </a>{' '}
+          to bypass boundary node caches before encrypting or decrypting secrets.
+        </div>
+      )}
 
       {identity ? (
         <div className="content">
