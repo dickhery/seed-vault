@@ -12,6 +12,9 @@
 
 # generated files
 **/declarations/
+!src/declarations/
+!src/declarations/seed-vault-backend/
+!src/declarations/seed-vault-backend/index.js
 
 # rust
 target/
