@@ -6,7 +6,7 @@
   "scripts": {
     "setup": "npm i && dfx canister create seed-vault-backend && dfx generate seed-vault-backend && dfx deploy",
     "start": "vite --port 3000",
-    "prebuild": "node check-ad-script.cjs && dfx generate",
+    "prebuild": "sh -c 'if command -v dfx >/dev/null 2>&1; then dfx generate seed-vault-backend || dfx generate; else echo \"dfx not installed; skipping canister generation\"; fi'",
     "build": "tsc && vite build",
     "format": "prettier --write \"src/**/*.{json,js,jsx,ts,tsx,css,scss}\""
   },

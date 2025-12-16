@@ -99,35 +99,6 @@ function isValidPrincipal(text) {
   }
 }
 
-function crc32(bytes) {
-  let checksum = 0xffffffff;
-  for (let i = 0; i < bytes.length; i += 1) {
-    checksum = CRC32_TABLE[(checksum ^ bytes[i]) & 0xff] ^ (checksum >>> 8);
-  }
-  return (checksum ^ 0xffffffff) >>> 0;
-}
-
-function hexToBytes(text) {
-  if (text.length % 2 !== 0) return null;
-  const bytes = new Uint8Array(text.length / 2);
-  for (let i = 0; i < text.length; i += 2) {
-    const byte = parseInt(text.slice(i, i + 2), 16);
-    if (Number.isNaN(byte)) return null;
-    bytes[i / 2] = byte;
-  }
-  return bytes;
-}
-
-function isValidAccountId(text) {
-  if (text.length !== 64 || !/^[0-9A-Fa-f]+$/.test(text)) return false;
-  const bytes = hexToBytes(text);
-  if (!bytes || bytes.length !== 32) return false;
-  const expected = crc32(bytes.subarray(4));
-  const provided =
-    (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
-  return (expected >>> 0) === (provided >>> 0);
-}
-
 function App() {
   const [identity, setIdentity] = useState(null);
   const [seedNames, setSeedNames] = useState([]);
@@ -612,7 +583,7 @@ function App() {
       const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
       const phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
       setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
-      setHiddenSeeds((prev) => ({ ...prev, [seedName]: false }));
+      setHiddenSeeds((prev) => ({ ...prev, [seedName]: true }));
       await loadAccount();
 
       backendActor.convert_collected_icp?.().catch(() => {});
@@ -664,7 +635,6 @@ function App() {
     event.preventDefault();
     const trimmedName = name.trim();
     const trimmedPhrase = phrase.trim();
-    const words = trimmedPhrase.split(/\s+/);
     if (!trimmedName || !trimmedPhrase) {
       setStatus('Seed name and phrase are required.');
       return;
@@ -677,12 +647,8 @@ function App() {
       setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
       return;
     }
-    if (words.length < 12 || words.length > 24 || !words.every((word) => /^[a-z]+$/.test(word))) {
-      setStatus('Seed phrase must be 12-24 lowercase words.');
-      return;
-    }
-    if (words.some((word) => word.length < 3 || word.length > 20)) {
-      setStatus('Each word should be between 3 and 20 characters.');
+    if (/\s{4,}/.test(trimmedPhrase)) {
+      setStatus('Seed phrase or password contains excessive whitespace. Please review.');
       return;
     }
     setIsAddingSeed(true);
@@ -754,17 +720,14 @@ function App() {
     }
 
     const amountE8s = Math.floor(amountNum * 1e8);
-    const upperRecipient = recipient.toUpperCase();
-    const isAccountId = isValidAccountId(upperRecipient);
     const isPid = isValidPrincipal(recipient);
 
-    if (!isAccountId && !isPid) {
-      setStatus('Invalid recipient: must be a Principal ID or 64-hex account ID');
+    if (!isPid) {
+      setStatus('Invalid recipient: must be a Principal ID');
       return;
     }
 
-    const feeMultiplier = isAccountId ? 2 : 1;
-    const totalE8s = amountE8s + feeMultiplier * LEDGER_FEE_E8S;
+    const totalE8s = amountE8s + LEDGER_FEE_E8S;
 
     if (accountDetails && Number(accountDetails.balance) < totalE8s) {
       setStatus(`Insufficient balance: need at least ${formatIcp(totalE8s)} ICP (including fees)`);
@@ -772,7 +735,7 @@ function App() {
     }
 
     const confirmed = window.confirm(
-      `Transfer ${transferAmount} ICP to ${recipient}? Ledger fee: ${formatIcp(feeMultiplier * LEDGER_FEE_E8S)} ICP. Total deduction: ${formatIcp(totalE8s)} ICP.`,
+      `Transfer ${transferAmount} ICP to ${recipient}? Ledger fee: ${formatIcp(LEDGER_FEE_E8S)} ICP. Total deduction: ${formatIcp(totalE8s)} ICP.`,
     );
     if (!confirmed) return;
 
@@ -956,12 +919,12 @@ function App() {
                 <h3>Transfer ICP</h3>
                 <form onSubmit={handleTransfer}>
                   <label>
-                    Recipient (Principal ID or 64-char Account ID)
+                    Recipient (Principal ID)
                     <input
                       required
                       value={recipient}
                       onChange={(e) => setRecipient(e.target.value.trim())}
-                      placeholder="aaaaa-aa or 64-hex account id"
+                      placeholder="aaaaa-aa"
                     />
                   </label>
                   <label>
@@ -999,7 +962,7 @@ function App() {
           </section>
 
           <section className="card">
-            <h2>Add a seed phrase</h2>
+            <h2>Add a seed phrase or password</h2>
             <form onSubmit={handleAddSeed}>
               <label>
                 Seed name
@@ -1016,15 +979,18 @@ function App() {
                 )}
               </label>
               <label>
-                Seed phrase
+                Seed phrase or password
                 <textarea
                   required
                   maxLength={MAX_SEED_CHARS}
                   value={phrase}
                   onChange={(e) => setPhrase(e.target.value)}
-                  placeholder="twelve random words..."
+                  placeholder="Enter your seed phrase, passphrase, or password"
                 />
                 <p className="muted">{phrase.length}/{MAX_SEED_CHARS} characters</p>
+                <p className="status warning">
+                  Avoid storing secrets on shared or untrusted devices. Decrypted data is only kept in memory briefly.
+                </p>
               </label>
                 <button
                   type="submit"

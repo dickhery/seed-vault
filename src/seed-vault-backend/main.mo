@@ -38,30 +38,9 @@ persistent actor Self {
   };
   type TransferResult = { #Ok : Nat; #Err : TransferError };
 
-  // Legacy ICP ledger transfer (for 64-char account identifiers).
-  type LegacyTransferError = {
-    #BadFee : { expected_fee : { e8s : Nat64 } };
-    #InsufficientFunds : { balance : { e8s : Nat64 } };
-    #TxTooOld : { allowed_window_nanos : Nat64 };
-    #TxCreatedInFuture;
-    #TxDuplicate : { duplicate_of : Nat64 };
-  };
-
-  type LegacyTransferArgs = {
-    memo : Nat64;
-    amount : { e8s : Nat64 };
-    fee : { e8s : Nat64 };
-    to : Blob;
-    from_subaccount : ?Blob;
-    created_at_time : ?{ timestamp_nanos : Nat64 };
-  };
-
-  type LegacyTransferResult = { #Ok : Nat64; #Err : LegacyTransferError };
-
   type Ledger = actor {
     icrc1_balance_of : Account -> async Nat;
     icrc1_transfer : TransferArg -> async TransferResult;
-    transfer : LegacyTransferArgs -> async LegacyTransferResult;
   };
 
   // XRC exchange rate types. Motoko reserves `class` as a keyword; the trailing
@@ -298,49 +277,6 @@ persistent actor Self {
       }
     });
     Blob.fromArray(padded)
-  };
-
-  private func hexNibble(c : Char) : ?Nat8 {
-    let code = Char.toNat32(c);
-    if (code >= 48 and code <= 57) {
-      ?Nat8.fromNat(Nat32.toNat(code - 48))
-    } else if (code >= 65 and code <= 70) {
-      ?Nat8.fromNat(Nat32.toNat(code - 55))
-    } else if (code >= 97 and code <= 102) {
-      ?Nat8.fromNat(Nat32.toNat(code - 87))
-    } else {
-      null
-    }
-  };
-
-  private func hexToBytes(hex : Text) : ?[Nat8] {
-    let chars = Text.toArray(hex);
-    if (chars.size() != 64) {
-      return null;
-    };
-
-    let nibbles = Array.tabulate<Nat8>(chars.size(), func(i : Nat) : Nat8 {
-      switch (hexNibble(chars[i])) {
-        case null { 255 };
-        case (?v) { v };
-      }
-    });
-
-    var invalid = false;
-    var i : Nat = 0;
-    while (i < nibbles.size()) {
-      if (nibbles[i] == 255) { invalid := true };
-      i += 1;
-    };
-    if (invalid) {
-      return null;
-    };
-
-    ?Array.tabulate<Nat8>(32, func(j : Nat) : Nat8 {
-      let hi = nibbles[j * 2];
-      let lo = nibbles[j * 2 + 1];
-      (hi << 4) + lo
-    })
   };
 
   private func refreshXdrRate() : async { rate : Nat; fallback_used : Bool } {
@@ -678,93 +614,38 @@ persistent actor Self {
       return #err("Ledger unavailable: " # Error.message(e));
     };
 
-    // Prefer treating the input as a legacy account identifier first to avoid trapping on invalid principals.
-    let accountIdBytes = hexToBytes(Text.toUppercase(to_text));
-    switch (accountIdBytes) {
-      case (?toBytes) {
-        let required = amount + ICP_TRANSFER_FEE * 2;
+    let principalRecipient : ?Principal = try {
+      ?Principal.fromText(to_text)
+    } catch (_) { null };
+
+    switch (principalRecipient) {
+      case null { return #err("Invalid recipient: must be a principal ID") };
+      case (?toPrincipal) {
+        let required = amount + ICP_TRANSFER_FEE;
         if (balance < required) {
           return #err("Insufficient balance to cover amount and fees");
         };
 
-        let defaultAccount : Account = { owner = Principal.fromActor(Self); subaccount = null };
-        let moveAmount = amount + ICP_TRANSFER_FEE;
-
-        let internalTransfer = try {
+        let transferResult = try {
           await ledger().icrc1_transfer({
             from_subaccount = ?callerSub;
-            to = defaultAccount;
-            amount = moveAmount;
+            to = { owner = toPrincipal; subaccount = null };
+            amount = amount;
             fee = ?ICP_TRANSFER_FEE;
             memo = null;
             created_at_time = null;
           })
         } catch (e) {
-          return #err("Internal transfer failed: " # Error.message(e));
+          return #err("Ledger transfer failed: " # Error.message(e));
         };
 
-        switch (internalTransfer) {
-          case (#Err(#InsufficientFunds)) { return #err("Internal transfer: insufficient funds") };
+        switch (transferResult) {
+          case (#Ok(block)) { #ok(block) };
+          case (#Err(#InsufficientFunds)) { #err("Ledger reports insufficient funds") };
           case (#Err(#BadFee({ expected_fee }))) {
-            return #err("Internal transfer: incorrect fee. Expected " # Nat.toText(expected_fee))
+            #err("Incorrect fee. Expected " # Nat.toText(expected_fee))
           };
-          case (#Err(#GenericError({ message }))) { return #err("Internal transfer error: " # message) };
-          case (#Ok(_)) {};
-        };
-
-        let legacyArgs : LegacyTransferArgs = {
-          memo = 0;
-          amount = { e8s = Nat64.fromNat(amount) };
-          fee = { e8s = Nat64.fromNat(ICP_TRANSFER_FEE) };
-          to = Blob.fromArray(toBytes);
-          from_subaccount = null;
-          created_at_time = null;
-        };
-
-        let legacyResult = try { await ledger().transfer(legacyArgs) } catch (e) {
-          return #err("Legacy transfer failed: " # Error.message(e));
-        };
-
-        switch (legacyResult) {
-          case (#Ok(block)) { #ok(Nat64.toNat(block)) };
-          case (#Err(err)) { #err(debug_show(err)) };
-        };
-      };
-      case null {
-        let principalRecipient : ?Principal = try {
-          ?Principal.fromText(to_text)
-        } catch (_) { null };
-
-        switch (principalRecipient) {
-          case null { return #err("Invalid recipient: must be a principal or 64-character account identifier") };
-          case (?toPrincipal) {
-            let required = amount + ICP_TRANSFER_FEE;
-            if (balance < required) {
-              return #err("Insufficient balance to cover amount and fees");
-            };
-
-            let transferResult = try {
-              await ledger().icrc1_transfer({
-                from_subaccount = ?callerSub;
-                to = { owner = toPrincipal; subaccount = null };
-                amount = amount;
-                fee = ?ICP_TRANSFER_FEE;
-                memo = null;
-                created_at_time = null;
-              })
-            } catch (e) {
-              return #err("Ledger transfer failed: " # Error.message(e));
-            };
-
-            switch (transferResult) {
-              case (#Ok(block)) { #ok(block) };
-              case (#Err(#InsufficientFunds)) { #err("Ledger reports insufficient funds") };
-              case (#Err(#BadFee({ expected_fee }))) {
-                #err("Incorrect fee. Expected " # Nat.toText(expected_fee))
-              };
-              case (#Err(#GenericError({ message }))) { #err("Ledger error: " # message) };
-            };
-          };
+          case (#Err(#GenericError({ message }))) { #err("Ledger error: " # message) };
         };
       };
     };
@@ -857,11 +738,19 @@ persistent actor Self {
     if (not isValidSeedName(name)) {
       return #err("Invalid characters in name. Allowed: letters, digits, spaces, hyphens, underscores.");
     };
-    if (Blob.toArray(cipher).size() == 0) {
+    let cipherArr = Blob.toArray(cipher);
+    if (cipherArr.size() == 0) {
       return #err("Ciphertext cannot be empty");
     };
-    if (Blob.toArray(cipher).size() > MAX_SEED_CIPHER_BYTES) {
+    if (cipherArr.size() > MAX_SEED_CIPHER_BYTES) {
       return #err("Seed phrase too long. Limit is 420 characters.");
+    };
+    var j : Nat = 0;
+    label checkCipher while (j < cipherArr.size()) {
+      if (cipherArr[j] == 0) {
+        return #err("Ciphertext contains unsupported bytes");
+      };
+      j += 1;
     };
 
     switch (findOwnerIndex(caller)) {
