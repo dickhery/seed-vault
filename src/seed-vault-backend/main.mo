@@ -5,6 +5,7 @@ import Debug "mo:base/Debug";
 import Error "mo:base/Error";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
+import Int "mo:base/Int";
 import Nat8 "mo:base/Nat8";
 import Nat64 "mo:base/Nat64";
 import Nat32 "mo:base/Nat32";
