@@ -349,23 +349,7 @@ function App() {
       });
 
       if (expired.length > 0) {
-        setDecryptedSeeds((prev) => {
-          const next = { ...prev };
-          expired.forEach((name) => {
-            delete next[name];
-          });
-          return next;
-        });
-        setHiddenSeeds((prev) => {
-          const next = { ...prev };
-          expired.forEach((name) => {
-            delete next[name];
-          });
-          return next;
-        });
-        if (typeof window !== 'undefined') {
-          expired.forEach((name) => window.sessionStorage.removeItem(seedStorageKey(principalText, name)));
-        }
+        expired.forEach((name) => clearDecryptedSeed(name));
         setStatus((prev) => prev || 'Decrypted seeds cleared automatically for safety.');
       }
     }, 1000);
@@ -648,6 +632,32 @@ function App() {
     setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
     setHiddenSeeds((prev) => ({ ...prev, [seedName]: true }));
     setSeedExpirations((prev) => ({ ...prev, [seedName]: expiresAt }));
+  }
+
+  function clearDecryptedSeed(seedName) {
+    if (typeof window !== 'undefined' && principalText) {
+      window.sessionStorage.removeItem(seedStorageKey(principalText, seedName));
+    }
+    setDecryptedSeeds((prev) => {
+      const next = { ...prev };
+      delete next[seedName];
+      return next;
+    });
+    setSeedExpirations((prev) => {
+      const next = { ...prev };
+      delete next[seedName];
+      return next;
+    });
+    setHiddenSeeds((prev) => {
+      const next = { ...prev };
+      delete next[seedName];
+      return next;
+    });
+    setCopyStatuses((prev) => {
+      const next = { ...prev };
+      delete next[seedName];
+      return next;
+    });
   }
 
   async function decryptSeed(seedName) {
