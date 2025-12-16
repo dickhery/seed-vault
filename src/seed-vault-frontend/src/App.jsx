@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
@@ -11,6 +11,7 @@ const LEDGER_FEE_E8S = 10_000;
 const MAX_SEED_CHARS = 420;
 const MAX_SEED_NAME_CHARS = 100;
 const SEED_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9])?$/u;
+const AUTO_CLEAR_MS = 300000;
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -42,6 +43,13 @@ function wordArrayToUint8(wordArray) {
 
 function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
+}
+
+function formatCountdown(seconds) {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  const minutes = Math.floor(safeSeconds / 60);
+  const secs = safeSeconds % 60;
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
 async function computeAccountId(canisterPrincipal, subaccountBytes) {
@@ -147,6 +155,8 @@ function App() {
   const authClientRef = useRef(null);
   const [isSafari, setIsSafari] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [clearDeadline, setClearDeadline] = useState(null);
+  const [countdownSeconds, setCountdownSeconds] = useState(null);
   const rawAccessUrl = useMemo(() => {
     if (typeof window === 'undefined') return null;
     const frontendId = process.env.CANISTER_ID_SEED_VAULT_FRONTEND;
@@ -311,7 +321,11 @@ function App() {
   }
 
   useEffect(() => {
-    if (Object.keys(decryptedSeeds).length === 0) return undefined;
+    if (Object.keys(decryptedSeeds).length === 0) {
+      setClearDeadline(null);
+      setCountdownSeconds(null);
+      return undefined;
+    }
 
     const clearSeeds = () => {
       setHiddenSeeds((prev) => {
@@ -323,14 +337,54 @@ function App() {
       });
       setDecryptedSeeds(() => ({}));
       setStatus('Decrypted seeds cleared from memory after 5 minutes.');
+      setClearDeadline(null);
+      setCountdownSeconds(null);
     };
 
-    const timer = setTimeout(clearSeeds, 300000);
+    const timer = setTimeout(clearSeeds, AUTO_CLEAR_MS);
+    const deadline = Date.now() + AUTO_CLEAR_MS;
+    setClearDeadline(deadline);
+    setCountdownSeconds(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
 
     return () => {
       clearTimeout(timer);
     };
   }, [decryptedSeeds]);
+
+  const clearSeedsFromMemory = useCallback(() => {
+    setHiddenSeeds((prev) => {
+      const updated = { ...prev };
+      Object.keys(decryptedSeeds).forEach((seedName) => {
+        updated[seedName] = true;
+      });
+      return updated;
+    });
+    if (Object.keys(decryptedSeeds).length > 0) {
+      setDecryptedSeeds(() => ({}));
+      setStatus('Decrypted seeds cleared from memory after 5 minutes.');
+    }
+    setClearDeadline(null);
+    setCountdownSeconds(null);
+  }, [decryptedSeeds]);
+
+  useEffect(() => {
+    if (!clearDeadline || Object.keys(decryptedSeeds).length === 0) {
+      return undefined;
+    }
+
+    const tick = () => {
+      const remainingSeconds = Math.max(0, Math.ceil((clearDeadline - Date.now()) / 1000));
+      setCountdownSeconds(remainingSeconds);
+      if (remainingSeconds <= 0) {
+        clearSeedsFromMemory();
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+
+    return () => clearInterval(interval);
+  }, [clearDeadline, clearSeedsFromMemory, decryptedSeeds]);
 
   async function loadAccount() {
     setIsRefreshing(true);
@@ -1104,6 +1158,9 @@ function App() {
                                   : DOMPurify.sanitize(decryptedSeeds[seedName]),
                               }}
                             />
+                            {countdownSeconds !== null && (
+                              <p className="countdown">Memory clears in {formatCountdown(countdownSeconds)}</p>
+                            )}
                             <button
                               type="button"
                               className="hide-button"
