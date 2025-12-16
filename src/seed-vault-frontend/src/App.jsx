@@ -189,6 +189,12 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const seedClearTimeouts = useRef({});
 
+  const decryptingAny = useMemo(
+    () => Object.values(decryptingSeeds).some(Boolean),
+    [decryptingSeeds],
+  );
+  const showProcessingNotice = loading && (isAddingSeed || decryptingAny);
+
   const principalText = useMemo(() => getPrincipalText(identity), [identity]);
 
   const isSecureContext = useMemo(() => {
@@ -1181,16 +1187,22 @@ function App() {
                   Avoid storing secrets on shared or untrusted devices. Decrypted data is only kept in memory briefly.
                 </p>
               </label>
-                <button
-                  type="submit"
-                  disabled={!name || !phrase || name.length > MAX_SEED_NAME_CHARS || isAddingSeed || loading}
-                  className={isAddingSeed ? 'button-loading' : ''}
-                >
+              <button
+                type="submit"
+                disabled={!name || !phrase || name.length > MAX_SEED_NAME_CHARS || isAddingSeed || loading}
+                className={isAddingSeed ? 'button-loading' : ''}
+              >
                 Save encrypted seed
                 {isAddingSeed && <span className="loading-spinner" />}
               </button>
             </form>
             {status && <p className="status">{status}</p>}
+            {showProcessingNotice && (
+              <div className="processing-notice" role="status">
+                Processing may take up to 45 seconds due to secure key derivation on the blockchain.
+                Please wait...
+              </div>
+            )}
           </section>
 
           <section className="card">
