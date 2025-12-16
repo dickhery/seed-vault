@@ -357,6 +357,19 @@ function App() {
     return () => clearInterval(interval);
   }, [identity, principalText]);
 
+  useEffect(() => {
+    if (!principalText) return;
+
+    const expired = Object.entries(seedExpirations)
+      .filter(([, expiresAt]) => expiresAt <= nowTs)
+      .map(([seedName]) => seedName);
+
+    if (expired.length === 0) return;
+
+    expired.forEach((name) => clearDecryptedSeed(name));
+    setStatus((prev) => prev || 'Decrypted seeds cleared automatically for safety.');
+  }, [principalText, seedExpirations, nowTs]);
+
   async function login() {
     if (!isSecureContext) {
       setStatus('Login requires HTTPS or localhost to enable WebAuthn. Please reopen the app over HTTPS.');
