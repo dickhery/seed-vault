@@ -1,0 +1,61 @@
+type Result_3 = 
+ variant {
+   err: text;
+   ok;
+ };
+type Result_2 = 
+ variant {
+   err: text;
+   ok: record {
+         blob;
+         blob;
+       };
+ };
+type Result_1 = 
+ variant {
+   err: text;
+   ok: record {
+         blob;
+         blob;
+         blob;
+       };
+ };
+type Result = 
+ variant {
+   err: text;
+   ok: nat;
+ };
+service : {
+  add_seed: (name: text, cipher: blob, iv: blob) -> (Result_3);
+  canister_cycles: () -> (nat) query;
+  convert_collected_icp: () -> (Result_3);
+  delete_seed: (name: text) -> (Result_3);
+  encrypted_symmetric_key_for_seed: (name: text, transport_public_key:
+   blob) -> (blob);
+  estimate_cost: (operation: text, count: nat) ->
+   (record {
+      cycles: nat;
+      fallback_used: bool;
+      icp_e8s: nat;
+    });
+  get_account_details: () ->
+   (record {
+      balance: nat;
+      canister: text;
+      owner: text;
+      subaccount: blob;
+    });
+  get_seed_cipher: (name: text) -> (Result_2);
+  get_seed_cipher_and_key: (name: text, transport_public_key: blob) ->
+   (Result_1);
+  get_seed_names: () -> (vec text) query;
+  pricing_status: () ->
+   (record {
+      fallback_used: bool;
+      last_rate: nat;
+      last_refresh_nanoseconds: int;
+    }) query;
+  public_key: () -> (blob);
+  seed_count: () -> (nat) query;
+  transfer_icp: (to_text: text, amount: nat) -> (Result);
+}
