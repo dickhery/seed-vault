@@ -11,6 +11,10 @@ const LEDGER_FEE_E8S = 10_000;
 const MAX_SEED_CHARS = 420;
 const MAX_SEED_NAME_CHARS = 100;
 const SEED_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9])?$/u;
+const SEED_TTL_MS = 5 * 60 * 1000;
+const SANITIZE_OPTS = { ALLOWED_TAGS: [], ALLOWED_ATTR: [] };
+
+DOMPurify.setConfig(SANITIZE_OPTS);
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -117,6 +121,40 @@ function validateSeedNameClient(rawName) {
   return { ok: true, value: normalized };
 }
 
+function validateSeedPhraseClient(rawPhrase) {
+  const trimmed = rawPhrase.trim();
+  if (!trimmed) {
+    return { ok: false, error: 'Seed phrase is required.' };
+  }
+  if (trimmed.length > MAX_SEED_CHARS) {
+    return { ok: false, error: `Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.` };
+  }
+  if (/[<>]/.test(trimmed)) {
+    return { ok: false, error: 'Angle brackets and HTML-like content are not allowed.' };
+  }
+  const words = trimmed.split(/\s+/u).filter(Boolean);
+  if (words.length < 4) {
+    return { ok: false, error: 'Seed phrase appears too short. Please double-check before saving.' };
+  }
+  return { ok: true, value: trimmed };
+}
+
+function getPrincipalText(identity) {
+  try {
+    return identity?.getPrincipal?.().toText() || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function seedStorageKey(principalText, seedName) {
+  return `seed_${principalText}_${seedName}`;
+}
+
+function sanitizeForHtml(text) {
+  return DOMPurify.sanitize(text, SANITIZE_OPTS);
+}
+
 function App() {
   const [identity, setIdentity] = useState(null);
   const [seedNames, setSeedNames] = useState([]);
@@ -143,10 +181,14 @@ function App() {
   const [isWaiting, setIsWaiting] = useState(false);
   const [usingFallbackPricing, setUsingFallbackPricing] = useState(false);
   const [accountId, setAccountId] = useState('');
+  const [seedExpirations, setSeedExpirations] = useState({});
+  const [nowTs, setNowTs] = useState(Date.now());
   const waitingRef = useRef(false);
   const authClientRef = useRef(null);
   const [isSafari, setIsSafari] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+
+  const principalText = useMemo(() => getPrincipalText(identity), [identity]);
 
   const isSecureContext = useMemo(() => {
     if (typeof window === 'undefined') return true;
@@ -201,6 +243,43 @@ function App() {
   }, [identity, backendActor]);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !principalText) {
+      setDecryptedSeeds({});
+      setSeedExpirations({});
+      setHiddenSeeds({});
+      return;
+    }
+
+    const restored = {};
+    const expirations = {};
+    const hidden = {};
+    const prefix = `seed_${principalText}_`;
+    const now = Date.now();
+
+    for (let i = 0; i < window.sessionStorage.length; i += 1) {
+      const key = window.sessionStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const seedName = key.substring(prefix.length);
+      try {
+        const parsed = JSON.parse(window.sessionStorage.getItem(key));
+        if (parsed?.expiresAt && parsed?.value && parsed.expiresAt > now) {
+          restored[seedName] = parsed.value;
+          expirations[seedName] = parsed.expiresAt;
+          hidden[seedName] = true;
+        } else {
+          window.sessionStorage.removeItem(key);
+        }
+      } catch (_) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+
+    setDecryptedSeeds(restored);
+    setSeedExpirations(expirations);
+    setHiddenSeeds(hidden);
+  }, [principalText]);
+
+  useEffect(() => {
     if (!accountDetails) {
       setAccountId('');
       return undefined;
@@ -251,6 +330,49 @@ function App() {
     };
   }, [identity]);
 
+  useEffect(() => {
+    if (!identity || !principalText) return undefined;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setNowTs(now);
+      const expired = [];
+      setSeedExpirations((prev) => {
+        const next = { ...prev };
+        Object.entries(prev).forEach(([seedName, expiresAt]) => {
+          if (expiresAt <= now) {
+            expired.push(seedName);
+            delete next[seedName];
+          }
+        });
+        return next;
+      });
+
+      if (expired.length > 0) {
+        setDecryptedSeeds((prev) => {
+          const next = { ...prev };
+          expired.forEach((name) => {
+            delete next[name];
+          });
+          return next;
+        });
+        setHiddenSeeds((prev) => {
+          const next = { ...prev };
+          expired.forEach((name) => {
+            delete next[name];
+          });
+          return next;
+        });
+        if (typeof window !== 'undefined') {
+          expired.forEach((name) => window.sessionStorage.removeItem(seedStorageKey(principalText, name)));
+        }
+        setStatus((prev) => prev || 'Decrypted seeds cleared automatically for safety.');
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [identity, principalText]);
+
   async function login() {
     if (!isSecureContext) {
       setStatus('Login requires HTTPS or localhost to enable WebAuthn. Please reopen the app over HTTPS.');
@@ -285,9 +407,19 @@ function App() {
       authClientRef.current = await AuthClient.create({ idleOptions: { disableIdle: true } });
     }
     await authClientRef.current.logout();
+    if (typeof window !== 'undefined' && principalText) {
+      const prefix = `seed_${principalText}_`;
+      for (let i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
+        const key = window.sessionStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          window.sessionStorage.removeItem(key);
+        }
+      }
+    }
     setIdentity(null);
     setSeedNames([]);
     setDecryptedSeeds({});
+    setSeedExpirations({});
     setAccountDetails(null);
     setEstimatedCost(null);
     setEstimateTimestamp(null);
@@ -297,28 +429,6 @@ function App() {
     setRecipient('');
     setTransferAmount('');
   }
-
-  useEffect(() => {
-    if (Object.keys(decryptedSeeds).length === 0) return undefined;
-
-    const clearSeeds = () => {
-      setHiddenSeeds((prev) => {
-        const updated = { ...prev };
-        Object.keys(decryptedSeeds).forEach((seedName) => {
-          updated[seedName] = true;
-        });
-        return updated;
-      });
-      setDecryptedSeeds(() => ({}));
-      setStatus('Decrypted seeds cleared from memory after 5 minutes.');
-    };
-
-    const timer = setTimeout(clearSeeds, 300000);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [decryptedSeeds]);
 
   async function loadAccount() {
     setIsRefreshing(true);
@@ -530,6 +640,16 @@ function App() {
     }
   }
 
+  function persistDecryptedSeed(seedName, phraseText) {
+    if (typeof window === 'undefined' || !principalText || !window.sessionStorage) return;
+    const expiresAt = Date.now() + SEED_TTL_MS;
+    const payload = { value: phraseText, expiresAt };
+    window.sessionStorage.setItem(seedStorageKey(principalText, seedName), JSON.stringify(payload));
+    setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
+    setHiddenSeeds((prev) => ({ ...prev, [seedName]: true }));
+    setSeedExpirations((prev) => ({ ...prev, [seedName]: expiresAt }));
+  }
+
   async function decryptSeed(seedName) {
     const validation = validateSeedNameClient(seedName);
     if (!validation.ok) {
@@ -537,6 +657,10 @@ function App() {
       return;
     }
     const normalizedName = validation.value;
+    if (!principalText) {
+      setStatus('Identity is not ready yet. Please re-authenticate.');
+      return;
+    }
     setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
     setStatus(`Preparing to decrypt "${normalizedName}"...`);
     try {
@@ -606,12 +730,11 @@ function App() {
               : new Uint8Array(vetKey);
       const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
       const phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
-      setDecryptedSeeds((prev) => ({ ...prev, [normalizedName]: phraseText }));
-      setHiddenSeeds((prev) => ({ ...prev, [normalizedName]: true }));
+      persistDecryptedSeed(normalizedName, phraseText);
       await loadAccount();
 
       backendActor.convert_collected_icp?.().catch(() => {});
-      setStatus(`"${normalizedName}" decrypted successfully.`);
+      setStatus(`"${normalizedName}" decrypted successfully. Auto-clearing in ${Math.floor(SEED_TTL_MS / 60000)} minutes.`);
     } catch (error) {
       setStatus(`Failed to decrypt "${normalizedName}". Please try again.`);
     } finally {
@@ -652,11 +775,19 @@ function App() {
         delete updated[normalizedName];
         return updated;
       });
+      setSeedExpirations((prev) => {
+        const updated = { ...prev };
+        delete updated[normalizedName];
+        return updated;
+      });
       setHiddenSeeds((prev) => {
         const updated = { ...prev };
         delete updated[normalizedName];
         return updated;
       });
+      if (typeof window !== 'undefined' && principalText) {
+        window.sessionStorage.removeItem(seedStorageKey(principalText, normalizedName));
+      }
       await loadAccount();
       setStatus(`"${normalizedName}" deleted.`);
     } catch (error) {
@@ -675,19 +806,12 @@ function App() {
       return;
     }
     const trimmedName = validation.value;
-    const trimmedPhrase = phrase.trim();
-    if (!trimmedName || !trimmedPhrase) {
-      setStatus('Seed name and phrase are required.');
+    const phraseValidation = validateSeedPhraseClient(phrase);
+    if (!phraseValidation.ok) {
+      setStatus(phraseValidation.error);
       return;
     }
-    if (trimmedPhrase.length > MAX_SEED_CHARS) {
-      setStatus(`Seed phrase is too long. Limit is ${MAX_SEED_CHARS} characters.`);
-      return;
-    }
-    if (/\s{4,}/.test(trimmedPhrase)) {
-      setStatus('Seed phrase or password contains excessive whitespace. Please review.');
-      return;
-    }
+    const trimmedPhrase = phraseValidation.value;
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
     try {
@@ -1053,7 +1177,7 @@ function App() {
                   <li key={seedName}>
                     <div className="seed-row">
                       <div>
-                        <p className="seed-name">{DOMPurify.sanitize(seedName)}</p>
+                        <p className="seed-name">{sanitizeForHtml(seedName)}</p>
                         {decryptedSeeds[seedName] && (
                           <>
                             <p
@@ -1061,9 +1185,18 @@ function App() {
                               dangerouslySetInnerHTML={{
                                 __html: hiddenSeeds[seedName]
                                   ? '••••••••••••••••••••••••••'
-                                  : DOMPurify.sanitize(decryptedSeeds[seedName]),
+                                  : sanitizeForHtml(decryptedSeeds[seedName]),
                               }}
                             />
+                            <p className="muted">
+                              Auto-hide in{' '}
+                              {seedExpirations[seedName]
+                                ? `${Math.max(
+                                    0,
+                                    Math.floor((seedExpirations[seedName] - nowTs) / 1000),
+                                  )}s`
+                                : '0s'}
+                            </p>
                             <button
                               type="button"
                               className="hide-button"
@@ -1104,7 +1237,7 @@ function App() {
                                   );
                                   setTimeout(() => {
                                     navigator.clipboard.writeText('').catch(() => {});
-                                  }, 10000);
+                                  }, 5000);
                                 } catch (error) {
                                   setStatus('Failed to copy. Please try again.');
                                 }
