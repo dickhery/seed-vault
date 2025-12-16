@@ -267,3 +267,14 @@ textarea {
   opacity: 0.7;
   cursor: progress;
 }
+
+.processing-notice {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #132b44;
+  border: 1px solid #1e3d61;
+  border-radius: 10px;
+  color: #a5b4fc;
+  font-size: 0.95rem;
+  text-align: center;
+}
