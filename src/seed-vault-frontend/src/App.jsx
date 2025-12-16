@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
 import CryptoJS from 'crypto-js';
@@ -21,15 +22,6 @@ const CRC32_TABLE = (() => {
   }
   return table;
 })();
-
-function escapeHtml(unsafe = '') {
-  return unsafe
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 function toHex(bytes = []) {
   return Array.from(bytes)
@@ -320,7 +312,7 @@ function App() {
   useEffect(() => {
     if (Object.keys(decryptedSeeds).length === 0) return undefined;
 
-    const timer = setTimeout(() => {
+    const clearSeeds = () => {
       setHiddenSeeds((prev) => {
         const updated = { ...prev };
         Object.keys(decryptedSeeds).forEach((seedName) => {
@@ -329,10 +321,14 @@ function App() {
         return updated;
       });
       setDecryptedSeeds(() => ({}));
-      setStatus('Decrypted seeds cleared from memory for security.');
-    }, 60000);
+      setStatus('Decrypted seeds cleared from memory after 5 minutes.');
+    };
 
-    return () => clearTimeout(timer);
+    const timer = setTimeout(clearSeeds, 300000);
+
+    return () => {
+      clearTimeout(timer);
+    };
   }, [decryptedSeeds]);
 
   async function loadAccount() {
@@ -554,14 +550,14 @@ function App() {
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
-      const fallback =
-        encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-      const confirmed = window.confirm(
+        const fallback =
+          encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+        const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+        const confirmed = window.confirm(
         `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
           fallback ? ' (Using fallback exchange rate estimate.)' : ''
-        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 1 minute.`,
-      );
+        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 5 minutes.`,
+        );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
         setStatus('');
@@ -1054,7 +1050,7 @@ function App() {
                   <li key={seedName}>
                     <div className="seed-row">
                       <div>
-                        <p className="seed-name">{escapeHtml(seedName)}</p>
+                        <p className="seed-name">{DOMPurify.sanitize(seedName)}</p>
                         {decryptedSeeds[seedName] && (
                           <>
                             <p
@@ -1062,7 +1058,7 @@ function App() {
                               dangerouslySetInnerHTML={{
                                 __html: hiddenSeeds[seedName]
                                   ? '••••••••••••••••••••••••••'
-                                  : escapeHtml(decryptedSeeds[seedName]),
+                                  : DOMPurify.sanitize(decryptedSeeds[seedName]),
                               }}
                             />
                             <button
