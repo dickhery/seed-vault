@@ -106,7 +106,7 @@ persistent actor Self {
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let MAX_OPERATION_COST_E8S : Nat = 100_000_000; // Safety cap: 1 ICP
-  let MAX_RATE_DEVIATION_PERCENT : Nat = 20; // Reject fresh rates that drift too far from cached values
+  let MAX_RATE_DEVIATION_PERCENT : Nat = 10; // Reject fresh rates that drift too far from cached values
   // 420 UTF-8 characters can expand to ~1680 bytes in the worst case; AES-GCM adds
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
@@ -148,9 +148,11 @@ persistent actor Self {
   // Track aggregate operations across all callers to mitigate Sybil-style rate limit bypasses.
   stable var globalOps : Nat = 0;
   stable var globalResetNs : Int = 0;
+  // Persist per-user audit events (timestamp, description) for a short access history.
+  stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
 
-  let RATE_LIMIT : Nat = 50; // operations per reset interval
-  let GLOBAL_RATE_LIMIT : Nat = 500; // overall operations per reset interval
+  let RATE_LIMIT : Nat = 20; // operations per reset interval (tighter client-side envelope)
+  let GLOBAL_RATE_LIMIT : Nat = 200; // overall operations per reset interval
   let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
@@ -220,9 +222,17 @@ persistent actor Self {
   };
 
   private func audit(event : Text, caller : Principal) {
-    Debug.print(
-      "[audit] " # event # " | caller=" # Principal.toText(caller) # " | ts=" # Int.toText(Time.now()),
-    );
+    let ts = Time.now();
+    Debug.print("[audit] " # event # " | caller=" # Principal.toText(caller) # " | ts=" # Int.toText(ts));
+
+    let key = callerKey(caller);
+    let existing = switch (Trie.find(auditLogs, key, Principal.equal)) {
+      case (?entries) { entries };
+      case null { [] };
+    };
+    let updatedEntries = Array.append<(Int, Text)>(existing, [(ts, event)]);
+    let (newTrie, _) = Trie.put(auditLogs, key, Principal.equal, updatedEntries);
+    auditLogs := newTrie;
   };
 
   private func checkRateLimit(caller : Principal) : Result.Result<(), Text> {
@@ -571,11 +581,11 @@ persistent actor Self {
       switch (result) {
         case (#Ok(_)) { audit("Refunded user after failure: " # context, caller) };
         case (#Err(err)) {
-          Debug.print("[audit] Refund failed for " # Principal.toText(caller) # ": " # debug_show(err));
+          audit("Refund attempt failed: " # debug_show(err) # " | context=" # context, caller);
         };
       };
     } catch (e) {
-      Debug.print("[audit] Refund error for " # Principal.toText(caller) # ": " # Error.message(e));
+      audit("Refund error: " # Error.message(e) # " | context=" # context, caller);
     };
   };
 
@@ -1027,6 +1037,14 @@ persistent actor Self {
       last_rate = last_xdr_per_icp_rate;
       last_refresh_nanoseconds = last_xdr_refresh_ns;
       fallback_used = last_pricing_fallback_used;
+    }
+  };
+
+  // Provide callers with a short rolling audit history of their own actions.
+  public query ({ caller }) func get_audit_log() : async [(Int, Text)] {
+    switch (Trie.find(auditLogs, callerKey(caller), Principal.equal)) {
+      case (?entries) { entries };
+      case null { [] };
     }
   };
 
