@@ -1,9 +1,11 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Char "mo:base/Char";
+import Debug "mo:base/Debug";
 import Error "mo:base/Error";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
 import Nat "mo:base/Nat";
+import Int "mo:base/Int";
 import Nat8 "mo:base/Nat8";
 import Nat64 "mo:base/Nat64";
 import Nat32 "mo:base/Nat32";
@@ -217,6 +219,12 @@ persistent actor Self {
     { key = principal; hash = Principal.hash(principal) }
   };
 
+  private func audit(event : Text, caller : Principal) {
+    Debug.print(
+      "[audit] " # event # " | caller=" # Principal.toText(caller) # " | ts=" # Int.toText(Time.now()),
+    );
+  };
+
   private func checkRateLimit(caller : Principal) : Result.Result<(), Text> {
     let now = Time.now();
     let key = callerKey(caller);
@@ -226,7 +234,11 @@ persistent actor Self {
       globalResetNs := now;
     };
     if (globalOps >= GLOBAL_RATE_LIMIT) {
-      return #err("Global rate limit reached. Please retry after a short pause.");
+      let retryNs = RESET_INTERVAL - (now - globalResetNs);
+      let retryMs = if (retryNs > 0) { retryNs / 1_000_000 } else { 0 };
+      return #err(
+        "Global rate limit reached. Please retry in ~" # Int.toText(retryMs) # " ms to protect other users.",
+      );
     };
     globalOps += 1;
 
@@ -237,7 +249,9 @@ persistent actor Self {
           userOps := updatedTrie;
           #ok(())
         } else if (count >= RATE_LIMIT) {
-          #err("Rate limit exceeded. Try again later.")
+          let retryNs = RESET_INTERVAL - (now - lastReset);
+          let retryMs = if (retryNs > 0) { retryNs / 1_000_000 } else { 0 };
+          #err("Rate limit exceeded. Try again in ~" # Int.toText(retryMs) # " ms.")
         } else {
           let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (count + 1, lastReset));
           userOps := updatedTrie;
@@ -555,10 +569,28 @@ persistent actor Self {
       });
 
       switch (result) {
-        case (#Ok(_)) {};
-        case (#Err(_)) {};
+        case (#Ok(_)) { audit("Refunded user after failure: " # context, caller) };
+        case (#Err(err)) {
+          Debug.print("[audit] Refund failed for " # Principal.toText(caller) # ": " # debug_show(err));
+        };
       };
-    } catch (_) {};
+    } catch (e) {
+      Debug.print("[audit] Refund error for " # Principal.toText(caller) # ": " # Error.message(e));
+    };
+  };
+
+  private func validateRequestedName(name : Text) : Result.Result<Text, Text> {
+    let normalized = normalizeName(name);
+    if (Text.size(normalized) == 0) {
+      return #err("Name cannot be empty");
+    };
+    if (Text.size(normalized) > MAX_SEED_NAME_CHARS) {
+      return #err("Name too long. Maximum 100 characters.");
+    };
+    if (not isValidSeedName(normalized)) {
+      return #err("Invalid characters in name. Allowed: letters, digits, spaces, hyphens, underscores.");
+    };
+    #ok(normalized)
   };
 
   private func context(principal : Principal) : Blob {
@@ -690,6 +722,10 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func encrypted_symmetric_key_for_seed(name : Text, transport_public_key : Blob) : async Blob {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { throw Error.reject(msg) };
+      case (#ok(n)) { n };
+    };
     switch (checkRateLimit(caller)) {
       case (#err(msg)) { throw Error.reject(msg) };
       case (#ok(())) {};
@@ -708,7 +744,7 @@ persistent actor Self {
     };
 
     try {
-      let input : Blob = Text.encodeUtf8(name);
+      let input : Blob = Text.encodeUtf8(normalizedName);
       let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
         input;
         context = context(caller);
@@ -718,6 +754,7 @@ persistent actor Self {
 
       let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
       ignore await convertToCycles(amountToConvert);
+      audit("Derived encrypted symmetric key for seed", caller);
       encrypted_key;
     } catch (e) {
       if (charged) {
@@ -728,15 +765,9 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
-    let normalizedName = normalizeName(name);
-    if (Text.size(normalizedName) == 0) {
-      return #err("Name cannot be empty");
-    };
-    if (Text.size(normalizedName) > MAX_SEED_NAME_CHARS) {
-      return #err("Name too long. Maximum 100 characters.");
-    };
-    if (not isValidSeedName(name)) {
-      return #err("Invalid characters in name. Allowed: letters, digits, spaces, hyphens, underscores.");
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
     };
     let cipherArr = Blob.toArray(cipher);
     if (cipherArr.size() == 0) {
@@ -811,6 +842,7 @@ persistent actor Self {
       if (icp_e8s > 0) {
         ignore await convertToCycles(amountToConvert);
       };
+      audit("Added seed " # normalizedName, caller);
       #ok(());
     } catch (e) {
       if (charged) {
@@ -821,6 +853,10 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func delete_seed(name : Text) : async Result.Result<(), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
     switch (checkRateLimit(caller)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
@@ -829,9 +865,9 @@ persistent actor Self {
       case null { #err("No seeds found for this user") };
       case (?idx) {
         let (owner, seeds) = seedsByOwner[idx];
-        let filtered = Array.filter<(Text, Blob, Blob)>(seeds, func((n, _, _)) : Bool { not sameName(n, name) });
+        let filtered = Array.filter<(Text, Blob, Blob)>(seeds, func((n, _, _)) : Bool { not sameName(n, normalizedName) });
         if (filtered.size() == seeds.size()) {
-          return #err("Seed not found: " # name);
+          return #err("Seed not found: " # normalizedName);
         };
 
         let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
@@ -845,12 +881,17 @@ persistent actor Self {
           },
         );
         seedsByOwner := updatedOwners;
+        audit("Deleted seed " # normalizedName, caller);
         #ok(());
       };
     };
   };
 
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
     switch (checkRateLimit(caller)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
@@ -861,13 +902,13 @@ persistent actor Self {
         let (_, seeds) = seedsByOwner[idx];
         var found : ?(Blob, Blob) = null;
         label search for ((n, c, ivVal) in Array.vals(seeds)) {
-          if (sameName(n, name)) {
+          if (sameName(n, normalizedName)) {
             found := ?(c, ivVal);
             break search;
           };
         };
         switch (found) {
-          case null { #err("Seed not found: " # name) };
+          case null { #err("Seed not found: " # normalizedName) };
           case (?pair) {
             let { icp_e8s } = await estimate_cost("decrypt", 1);
             switch (assertCostWithinLimit(icp_e8s)) {
@@ -887,6 +928,7 @@ persistent actor Self {
                 let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
                 ignore await convertToCycles(amountToConvert);
               };
+              audit("Retrieved cipher only for seed " # normalizedName, caller);
               #ok(pair);
             } catch (e) {
               if (charged) {
@@ -904,6 +946,10 @@ persistent actor Self {
     name : Text,
     transport_public_key : Blob,
   ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
     switch (checkRateLimit(caller)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
@@ -914,14 +960,14 @@ persistent actor Self {
         let (_, seeds) = seedsByOwner[idx];
         var found : ?(Blob, Blob) = null;
         label search for ((n, c, ivVal) in Array.vals(seeds)) {
-          if (sameName(n, name)) {
+          if (sameName(n, normalizedName)) {
             found := ?(c, ivVal);
             break search;
           };
         };
 
         switch (found) {
-          case null { #err("Seed not found: " # name) };
+          case null { #err("Seed not found: " # normalizedName) };
           case (?pair) {
             let decryptCost = await estimate_cost("decrypt", 1);
             let deriveCost = await estimate_cost("derive", 1);
@@ -940,7 +986,7 @@ persistent actor Self {
             };
 
             try {
-              let input : Blob = Text.encodeUtf8(name);
+              let input : Blob = Text.encodeUtf8(normalizedName);
               let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
                 input;
                 context = context(caller);
@@ -954,6 +1000,7 @@ persistent actor Self {
               };
 
               let (cipher, iv) = pair;
+              audit("Retrieved cipher and vetKD key for seed " # normalizedName, caller);
               #ok((cipher, iv, encrypted_key));
             } catch (e) {
               if (charged) {

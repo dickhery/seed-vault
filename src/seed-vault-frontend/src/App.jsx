@@ -10,6 +10,7 @@ const II_URL = 'https://identity.ic0.app';
 const LEDGER_FEE_E8S = 10_000;
 const MAX_SEED_CHARS = 420;
 const MAX_SEED_NAME_CHARS = 100;
+const SEED_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9])?$/u;
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -97,6 +98,23 @@ function isValidPrincipal(text) {
   } catch (_) {
     return false;
   }
+}
+
+function validateSeedNameClient(rawName) {
+  const normalized = rawName.trim();
+  if (!normalized) {
+    return { ok: false, error: 'Seed name is required.' };
+  }
+  if (normalized.length > MAX_SEED_NAME_CHARS) {
+    return { ok: false, error: `Seed name is too long. Limit is ${MAX_SEED_NAME_CHARS} characters.` };
+  }
+  if (!SEED_NAME_PATTERN.test(normalized)) {
+    return {
+      ok: false,
+      error: 'Seed name can only include letters, numbers, spaces, hyphens, and underscores, and cannot start or end with hyphens/underscores.',
+    };
+  }
+  return { ok: true, value: normalized };
 }
 
 function App() {
@@ -513,8 +531,14 @@ function App() {
   }
 
   async function decryptSeed(seedName) {
+    const validation = validateSeedNameClient(seedName);
+    if (!validation.ok) {
+      setStatus(validation.error);
+      return;
+    }
+    const normalizedName = validation.value;
     setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
-    setStatus(`Preparing to decrypt "${seedName}"...`);
+    setStatus(`Preparing to decrypt "${normalizedName}"...`);
     try {
       const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
         backendActor.estimate_cost('encrypt', 1),
@@ -525,10 +549,10 @@ function App() {
           encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
         const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
         const confirmed = window.confirm(
-        `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
+        `Decrypting "${normalizedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
           fallback ? ' (Using fallback exchange rate estimate.)' : ''
         } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 5 minutes.`,
-        );
+      );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
         setStatus('');
@@ -545,7 +569,7 @@ function App() {
       }
 
       setLoading(true);
-      setStatus(`Attempting payment for decryption of "${seedName}"...`);
+      setStatus(`Attempting payment for decryption of "${normalizedName}"...`);
       await waitForBalance(
         required,
         `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
@@ -553,7 +577,7 @@ function App() {
       setStatus(`Decrypting "${seedName}"...`);
       const transportSecretKey = TransportSecretKey.random();
       const result = await backendActor.get_seed_cipher_and_key(
-        seedName,
+        normalizedName,
         transportSecretKey.publicKeyBytes(),
       );
       if ('err' in result) {
@@ -564,7 +588,7 @@ function App() {
       const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
       const derivedPublicKeyBytes = await backendActor.public_key();
       const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
-      const input = new TextEncoder().encode(seedName);
+      const input = new TextEncoder().encode(normalizedName);
       let vetKey;
       try {
         vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
@@ -582,14 +606,14 @@ function App() {
               : new Uint8Array(vetKey);
       const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
       const phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
-      setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
-      setHiddenSeeds((prev) => ({ ...prev, [seedName]: true }));
+      setDecryptedSeeds((prev) => ({ ...prev, [normalizedName]: phraseText }));
+      setHiddenSeeds((prev) => ({ ...prev, [normalizedName]: true }));
       await loadAccount();
 
       backendActor.convert_collected_icp?.().catch(() => {});
-      setStatus(`"${seedName}" decrypted successfully.`);
+      setStatus(`"${normalizedName}" decrypted successfully.`);
     } catch (error) {
-      setStatus(`Failed to decrypt "${seedName}". Please try again.`);
+      setStatus(`Failed to decrypt "${normalizedName}". Please try again.`);
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
@@ -597,34 +621,46 @@ function App() {
   }
 
   async function deleteSeed(seedName) {
+    const validation = validateSeedNameClient(seedName);
+    if (!validation.ok) {
+      setStatus(validation.error);
+      return;
+    }
+    const normalizedName = validation.value;
     const confirmed = window.confirm(
-      `Are you sure you want to delete "${seedName}"? This action cannot be undone.`,
+      `Are you sure you want to delete "${normalizedName}"? This action cannot be undone.`,
     );
     if (!confirmed) return;
 
+    const typed = window.prompt('Type DELETE to confirm permanent deletion of this seed.');
+    if (!typed || typed.toUpperCase() !== 'DELETE') {
+      setStatus('Deletion cancelled. Confirmation phrase not entered.');
+      return;
+    }
+
     setDeletingSeeds((prev) => ({ ...prev, [seedName]: true }));
     setLoading(true);
-    setStatus(`Deleting "${seedName}"...`);
+    setStatus(`Deleting "${normalizedName}"...`);
     try {
-      const result = await backendActor.delete_seed(seedName);
+      const result = await backendActor.delete_seed(normalizedName);
       if ('err' in result) {
         throw new Error(result.err);
       }
       await loadSeeds();
       setDecryptedSeeds((prev) => {
         const updated = { ...prev };
-        delete updated[seedName];
+        delete updated[normalizedName];
         return updated;
       });
       setHiddenSeeds((prev) => {
         const updated = { ...prev };
-        delete updated[seedName];
+        delete updated[normalizedName];
         return updated;
       });
       await loadAccount();
-      setStatus(`"${seedName}" deleted.`);
+      setStatus(`"${normalizedName}" deleted.`);
     } catch (error) {
-      setStatus(`Failed to delete "${seedName}". Please try again.`);
+      setStatus(`Failed to delete "${normalizedName}". Please try again.`);
     } finally {
       setDeletingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
@@ -633,14 +669,15 @@ function App() {
 
   async function handleAddSeed(event) {
     event.preventDefault();
-    const trimmedName = name.trim();
+    const validation = validateSeedNameClient(name);
+    if (!validation.ok) {
+      setStatus(validation.error);
+      return;
+    }
+    const trimmedName = validation.value;
     const trimmedPhrase = phrase.trim();
     if (!trimmedName || !trimmedPhrase) {
       setStatus('Seed name and phrase are required.');
-      return;
-    }
-    if (trimmedName.length > MAX_SEED_NAME_CHARS) {
-      setStatus(`Seed name is too long. Limit is ${MAX_SEED_NAME_CHARS} characters.`);
       return;
     }
     if (trimmedPhrase.length > MAX_SEED_CHARS) {
