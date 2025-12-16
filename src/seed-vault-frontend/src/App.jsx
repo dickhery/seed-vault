@@ -321,24 +321,13 @@ function App() {
         return updated;
       });
       setDecryptedSeeds(() => ({}));
-      setStatus('Decrypted seeds cleared from memory after inactivity.');
+      setStatus('Decrypted seeds cleared from memory after 5 minutes.');
     };
 
-    let timer = setTimeout(clearSeeds, 300000);
-    const resetTimer = () => {
-      clearTimeout(timer);
-      timer = setTimeout(clearSeeds, 300000);
-    };
-
-    window.addEventListener('mousemove', resetTimer);
-    window.addEventListener('keydown', resetTimer);
-    window.addEventListener('touchstart', resetTimer);
+    const timer = setTimeout(clearSeeds, 300000);
 
     return () => {
       clearTimeout(timer);
-      window.removeEventListener('mousemove', resetTimer);
-      window.removeEventListener('keydown', resetTimer);
-      window.removeEventListener('touchstart', resetTimer);
     };
   }, [decryptedSeeds]);
 
@@ -561,14 +550,14 @@ function App() {
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
-      const fallback =
-        encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-      const confirmed = window.confirm(
+        const fallback =
+          encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+        const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+        const confirmed = window.confirm(
         `Decrypting "${seedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
           fallback ? ' (Using fallback exchange rate estimate.)' : ''
-        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 1 minute.`,
-      );
+        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 5 minutes.`,
+        );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
         setStatus('');
