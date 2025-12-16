@@ -187,6 +187,7 @@ function App() {
   const authClientRef = useRef(null);
   const [isSafari, setIsSafari] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const seedClearTimeouts = useRef({});
 
   const principalText = useMemo(() => getPrincipalText(identity), [identity]);
 
@@ -244,6 +245,8 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || !principalText) {
+      Object.values(seedClearTimeouts.current).forEach((timeoutId) => clearTimeout(timeoutId));
+      seedClearTimeouts.current = {};
       setDecryptedSeeds({});
       setSeedExpirations({});
       setHiddenSeeds({});
@@ -256,6 +259,9 @@ function App() {
     const prefix = `seed_${principalText}_`;
     const now = Date.now();
 
+    Object.values(seedClearTimeouts.current).forEach((timeoutId) => clearTimeout(timeoutId));
+    seedClearTimeouts.current = {};
+
     for (let i = 0; i < window.sessionStorage.length; i += 1) {
       const key = window.sessionStorage.key(i);
       if (!key || !key.startsWith(prefix)) continue;
@@ -266,6 +272,8 @@ function App() {
           restored[seedName] = parsed.value;
           expirations[seedName] = parsed.expiresAt;
           hidden[seedName] = true;
+          const remaining = parsed.expiresAt - now;
+          seedClearTimeouts.current[seedName] = setTimeout(() => clearDecryptedSeed(seedName), remaining);
         } else {
           window.sessionStorage.removeItem(key);
         }
@@ -357,19 +365,6 @@ function App() {
     return () => clearInterval(interval);
   }, [identity, principalText]);
 
-  useEffect(() => {
-    if (!principalText) return;
-
-    const expired = Object.entries(seedExpirations)
-      .filter(([, expiresAt]) => expiresAt <= nowTs)
-      .map(([seedName]) => seedName);
-
-    if (expired.length === 0) return;
-
-    expired.forEach((name) => clearDecryptedSeed(name));
-    setStatus((prev) => prev || 'Decrypted seeds cleared automatically for safety.');
-  }, [principalText, seedExpirations, nowTs]);
-
   async function login() {
     if (!isSecureContext) {
       setStatus('Login requires HTTPS or localhost to enable WebAuthn. Please reopen the app over HTTPS.');
@@ -413,6 +408,8 @@ function App() {
         }
       }
     }
+    Object.values(seedClearTimeouts.current).forEach((timeoutId) => clearTimeout(timeoutId));
+    seedClearTimeouts.current = {};
     setIdentity(null);
     setSeedNames([]);
     setDecryptedSeeds({});
@@ -645,11 +642,19 @@ function App() {
     setDecryptedSeeds((prev) => ({ ...prev, [seedName]: phraseText }));
     setHiddenSeeds((prev) => ({ ...prev, [seedName]: true }));
     setSeedExpirations((prev) => ({ ...prev, [seedName]: expiresAt }));
+    if (seedClearTimeouts.current[seedName]) {
+      clearTimeout(seedClearTimeouts.current[seedName]);
+    }
+    seedClearTimeouts.current[seedName] = setTimeout(() => clearDecryptedSeed(seedName), SEED_TTL_MS);
   }
 
   function clearDecryptedSeed(seedName) {
     if (typeof window !== 'undefined' && principalText) {
       window.sessionStorage.removeItem(seedStorageKey(principalText, seedName));
+    }
+    if (seedClearTimeouts.current[seedName]) {
+      clearTimeout(seedClearTimeouts.current[seedName]);
+      delete seedClearTimeouts.current[seedName];
     }
     setDecryptedSeeds((prev) => {
       const next = { ...prev };
@@ -1201,7 +1206,7 @@ function App() {
                     <div className="seed-row">
                       <div>
                         <p className="seed-name">{sanitizeForHtml(seedName)}</p>
-                        {decryptedSeeds[seedName] && (
+                        {decryptedSeeds[seedName] && seedExpirations[seedName] > nowTs && (
                           <>
                             <p
                               className="seed-phrase"
@@ -1211,15 +1216,15 @@ function App() {
                                   : sanitizeForHtml(decryptedSeeds[seedName]),
                               }}
                             />
-                            <p className="muted">
-                              Auto-hide in{' '}
-                              {seedExpirations[seedName]
-                                ? `${Math.max(
-                                    0,
-                                    Math.floor((seedExpirations[seedName] - nowTs) / 1000),
-                                  )}s`
-                                : '0s'}
-                            </p>
+                            {seedExpirations[seedName] > nowTs && (
+                              <p className="muted">
+                                Auto-hide in{' '}
+                                {`${Math.max(
+                                  0,
+                                  Math.floor((seedExpirations[seedName] - nowTs) / 1000),
+                                )}s`}
+                              </p>
+                            )}
                             <button
                               type="button"
                               className="hide-button"
