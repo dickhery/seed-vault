@@ -148,6 +148,12 @@ function App() {
   const [isSafari, setIsSafari] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
+  const rawDomainUrl = useMemo(() => {
+    const canisterId =
+      process.env.CANISTER_ID_SEED_VAULT_FRONTEND || process.env.CANISTER_ID_SEED_VAULT_BACKEND || '';
+    return canisterId ? `https://${canisterId}.raw.icp0.io/` : 'the .raw.icp0.io domain';
+  }, []);
+
   const isSecureContext = useMemo(() => {
     if (typeof window === 'undefined') return true;
     if (window.isSecureContext) return true;
@@ -537,6 +543,13 @@ function App() {
       return;
     }
     const normalizedName = validation.value;
+    const rawConfirmed = window.confirm(
+      `For maximum integrity, access the app via ${rawDomainUrl} to avoid boundary node tampering. Continue with decryption?`,
+    );
+    if (!rawConfirmed) {
+      setStatus('Decryption cancelled. Use the raw domain for the most secure path.');
+      return;
+    }
     setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
     setStatus(`Preparing to decrypt "${normalizedName}"...`);
     try {
@@ -545,10 +558,10 @@ function App() {
         backendActor.estimate_cost('decrypt', 1),
         backendActor.estimate_cost('derive', 1),
       ]);
-        const fallback =
-          encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-        const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-        const confirmed = window.confirm(
+      const fallback =
+        encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+      const confirmed = window.confirm(
         `Decrypting "${normalizedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
           fallback ? ' (Using fallback exchange rate estimate.)' : ''
         } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 5 minutes.`,
@@ -691,6 +704,14 @@ function App() {
     setIsAddingSeed(true);
     setStatus('Preparing to save seed...');
     try {
+      const rawConfirmed = window.confirm(
+        `For maximum integrity, access the app via ${rawDomainUrl} to avoid boundary node tampering. Continue?`,
+      );
+      if (!rawConfirmed) {
+        setIsAddingSeed(false);
+        setStatus('Encryption cancelled. Switch to the raw domain to proceed.');
+        return;
+      }
       const securityConfirmed = window.confirm(
         'Warning: Enter and decrypt seed phrases only on trusted devices. Proceed to encrypt?',
       );
@@ -840,6 +861,22 @@ function App() {
           )}
         </div>
       </header>
+
+      {identity && (
+        <div className="status warning security-banner">
+          <strong>Security tip:</strong> For the highest integrity, access the dapp via
+          {' '}
+          {typeof rawDomainUrl === 'string' && rawDomainUrl.startsWith('http') ? (
+            <a href={rawDomainUrl} target="_blank" rel="noopener noreferrer">
+              {rawDomainUrl}
+            </a>
+          ) : (
+            '.raw.icp0.io'
+          )}
+          {' '}
+          to bypass boundary nodes and reduce the risk of modified assets.
+        </div>
+      )}
 
       {identity ? (
         <div className="content">

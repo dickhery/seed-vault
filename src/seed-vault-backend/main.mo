@@ -116,7 +116,7 @@ persistent actor Self {
   let ENCRYPT_CYCLE_COST : Nat = 0;
   let DECRYPT_CYCLE_COST : Nat = 0;
   let PRICING_REFRESH_INTERVAL_NS : Int = 300_000_000_000; // 5 minutes
-  let FALLBACK_RETRY_INTERVAL_NS : Int = 60_000_000_000; // 1 minute between fallback retries
+  let FALLBACK_RETRY_INTERVAL_NS : Int = 30_000_000_000; // 30 seconds between fallback retries
   // The XRC requires at least 1B cycles to be attached to each request. Keep a
   // small buffer above that to avoid transient `NotEnoughCycles` rejections on
   // saturated replicas. This improves the likelihood of live pricing succeeding
@@ -150,7 +150,7 @@ persistent actor Self {
   stable var globalResetNs : Int = 0;
 
   let RATE_LIMIT : Nat = 50; // operations per reset interval
-  let GLOBAL_RATE_LIMIT : Nat = 500; // overall operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 100; // tightened overall operations per reset interval
   let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
@@ -239,6 +239,9 @@ persistent actor Self {
       return #err(
         "Global rate limit reached. Please retry in ~" # Int.toText(retryMs) # " ms to protect other users.",
       );
+    };
+    if (ExperimentalCycles.balance() < 1_000_000_000) {
+      return #err("Canister temporarily low on cycles. Please retry in a few moments.");
     };
     globalOps += 1;
 
@@ -782,6 +785,10 @@ persistent actor Self {
         return #err("Ciphertext contains unsupported bytes");
       };
       j += 1;
+    };
+    let ivArr = Blob.toArray(iv);
+    if (ivArr.size() != 12) {
+      return #err("Invalid IV length. AES-GCM requires a 12-byte IV.");
     };
 
     switch (findOwnerIndex(caller)) {
