@@ -848,7 +848,7 @@ persistent actor Self {
       case (#ok(())) {};
     };
 
-    let encryptOps : Nat = 1;
+    var encryptOps : Nat = 1;
     switch (image_cipher) {
       case (?_) { encryptOps += 1 };
       case null {};
@@ -994,7 +994,7 @@ persistent actor Self {
         case null { return #err("No seeds found for this user") };
         case (?idx) {
           let (owner, seeds) = seedsByOwner[idx];
-          var updated = Array.clone<Seed>(seeds);
+            var updated = Array.tabulate<Seed>(seeds.size(), func(i : Nat) : Seed { seeds[i] });
           var found = false;
 
           var i : Nat = 0;
