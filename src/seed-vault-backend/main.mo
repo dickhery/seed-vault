@@ -143,8 +143,10 @@ persistent actor Self {
     image_iv : ?Blob;
   };
 
-  // Stable-friendly storage mapping owner -> list of seeds (including optional images)
-  stable var seedsByOwner : [(Principal, [Seed])] = [];
+  // Legacy storage (name, seed_cipher, seed_iv) preserved for upgrade compatibility.
+  stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
+  // Current storage mapping owner -> list of seeds (including optional images).
+  stable var seedsByOwnerV2 : [(Principal, [Seed])] = [];
   // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
   stable var last_xdr_per_icp_rate : Nat = 0;
   // Track when pricing was last refreshed so the frontend can present a meaningful timestamp and we can
@@ -164,10 +166,40 @@ persistent actor Self {
   let GLOBAL_RATE_LIMIT : Nat = 200; // overall operations per reset interval
   let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
 
+  // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
+  private func ensureSeedsMigrated() {
+    if (seedsByOwnerV2.size() == 0 and seedsByOwner.size() > 0) {
+      let migrated = Array.tabulate<(Principal, [Seed])>(
+        seedsByOwner.size(),
+        func(i : Nat) : (Principal, [Seed]) {
+          let (owner, legacySeeds) = seedsByOwner[i];
+          let converted = Array.tabulate<Seed>(
+            legacySeeds.size(),
+            func(j : Nat) : Seed {
+              let (n, c, iv) = legacySeeds[j];
+              {
+                name = n;
+                seed_cipher = c;
+                seed_iv = iv;
+                image_cipher = null;
+                image_iv = null;
+              }
+            },
+          );
+          (owner, converted)
+        },
+      );
+      seedsByOwnerV2 := migrated;
+      // Clear legacy data to avoid double-charging storage and keep future upgrades simpler.
+      seedsByOwner := [];
+    };
+  };
+
   private func findOwnerIndex(owner : Principal) : ?Nat {
+    ensureSeedsMigrated();
     var i : Nat = 0;
-    while (i < seedsByOwner.size()) {
-      let (p, _) = seedsByOwner[i];
+    while (i < seedsByOwnerV2.size()) {
+      let (p, _) = seedsByOwnerV2[i];
       if (Principal.equal(p, owner)) {
         return ?i;
       };
@@ -724,16 +756,18 @@ persistent actor Self {
   };
 
   public query ({ caller }) func seed_count() : async Nat {
+    ensureSeedsMigrated();
     switch (findOwnerIndex(caller)) {
-      case (?idx) { let (_, seeds) = seedsByOwner[idx]; seeds.size() };
+      case (?idx) { let (_, seeds) = seedsByOwnerV2[idx]; seeds.size() };
       case null { 0 };
     };
   };
 
   public query ({ caller }) func get_seed_names() : async [{ name : Text; has_image : Bool }] {
+    ensureSeedsMigrated();
     switch (findOwnerIndex(caller)) {
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         Array.map<Seed, { name : Text; has_image : Bool }>(
           seeds,
           func(s : Seed) : { name : Text; has_image : Bool } {
@@ -832,7 +866,7 @@ persistent actor Self {
 
     switch (findOwnerIndex(caller)) {
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         if (seeds.size() >= MAX_SEEDS_PER_USER) {
           return #err("Maximum number of seeds reached. Delete one before adding another.");
         };
@@ -880,22 +914,22 @@ persistent actor Self {
 
       switch (findOwnerIndex(caller)) {
         case (?idx) {
-          let (_, seeds) = seedsByOwner[idx];
+          let (_, seeds) = seedsByOwnerV2[idx];
           let updatedSeeds = Array.append<Seed>(seeds, [newSeed]);
           let updatedOwners = Array.tabulate<(Principal, [Seed])>(
-            seedsByOwner.size(),
+            seedsByOwnerV2.size(),
             func(j : Nat) : (Principal, [Seed]) {
               if (j == idx) {
                 (caller, updatedSeeds)
               } else {
-                seedsByOwner[j]
+                seedsByOwnerV2[j]
               }
             },
           );
-          seedsByOwner := updatedOwners;
+          seedsByOwnerV2 := updatedOwners;
         };
         case null {
-          seedsByOwner := Array.append<(Principal, [Seed])>(seedsByOwner, [(caller, [newSeed])]);
+          seedsByOwnerV2 := Array.append<(Principal, [Seed])>(seedsByOwnerV2, [(caller, [newSeed])]);
         };
       };
 
@@ -924,23 +958,23 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (owner, seeds) = seedsByOwner[idx];
+        let (owner, seeds) = seedsByOwnerV2[idx];
         let filtered = Array.filter<Seed>(seeds, func(s : Seed) : Bool { not sameName(s.name, normalizedName) });
         if (filtered.size() == seeds.size()) {
           return #err("Seed not found: " # normalizedName);
         };
 
         let updatedOwners = Array.tabulate<(Principal, [Seed])>(
-          seedsByOwner.size(),
+          seedsByOwnerV2.size(),
           func(j : Nat) : (Principal, [Seed]) {
             if (j == idx) {
               (owner, filtered)
             } else {
-              seedsByOwner[j]
+              seedsByOwnerV2[j]
             }
           },
         );
-        seedsByOwner := updatedOwners;
+        seedsByOwnerV2 := updatedOwners;
         audit("Deleted seed " # normalizedName, caller);
         #ok(());
       };
@@ -993,8 +1027,8 @@ persistent actor Self {
       switch (findOwnerIndex(caller)) {
         case null { return #err("No seeds found for this user") };
         case (?idx) {
-          let (owner, seeds) = seedsByOwner[idx];
-            var updated = Array.tabulateVar<Seed>(seeds.size(), func(i : Nat) : Seed { seeds[i] });
+          let (owner, seeds) = seedsByOwnerV2[idx];
+          var updated = Array.tabulateVar<Seed>(seeds.size(), func(i : Nat) : Seed { seeds[i] });
           var found = false;
 
           var i : Nat = 0;
@@ -1021,16 +1055,16 @@ persistent actor Self {
           let immutableUpdated = Array.freeze<Seed>(updated);
 
           let updatedOwners = Array.tabulate<(Principal, [Seed])>(
-            seedsByOwner.size(),
+            seedsByOwnerV2.size(),
             func(j : Nat) : (Principal, [Seed]) {
               if (j == idx) {
                 (owner, immutableUpdated)
               } else {
-                seedsByOwner[j]
+                seedsByOwnerV2[j]
               }
             },
           );
-          seedsByOwner := updatedOwners;
+          seedsByOwnerV2 := updatedOwners;
         };
       };
 
@@ -1059,7 +1093,7 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         var found : ?(Blob, Blob) = null;
         label search for (s in Array.vals(seeds)) {
           if (sameName(s.name, normalizedName)) {
@@ -1117,7 +1151,7 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         var found : ?(Blob, Blob) = null;
         label search for (s in Array.vals(seeds)) {
           if (sameName(s.name, normalizedName)) {
@@ -1186,7 +1220,7 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         var found : ?Seed = null;
         label search for (s in Array.vals(seeds)) {
           if (sameName(s.name, normalizedName)) {
@@ -1245,7 +1279,7 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         var found : ?Seed = null;
         label search for (s in Array.vals(seeds)) {
           if (sameName(s.name, normalizedName)) {
