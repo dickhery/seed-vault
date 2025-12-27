@@ -183,6 +183,14 @@ function App() {
   const [accountId, setAccountId] = useState('');
   const [seedExpirations, setSeedExpirations] = useState({});
   const [nowTs, setNowTs] = useState(Date.now());
+  const [hasImages, setHasImages] = useState({});
+  const [decryptedImages, setDecryptedImages] = useState({});
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreviewName, setImagePreviewName] = useState('');
+  const [addingImageFor, setAddingImageFor] = useState(null);
+  const [pendingImageFile, setPendingImageFile] = useState(null);
+  const [encryptedSnapshots, setEncryptedSnapshots] = useState({});
+  const [showEncrypted, setShowEncrypted] = useState({});
   const waitingRef = useRef(false);
   const authClientRef = useRef(null);
   const [isSafari, setIsSafari] = useState(false);
@@ -419,7 +427,13 @@ function App() {
     setIdentity(null);
     setSeedNames([]);
     setDecryptedSeeds({});
+    setDecryptedImages({});
     setSeedExpirations({});
+    setHasImages({});
+    setEncryptedSnapshots({});
+    setShowEncrypted({});
+    setAddingImageFor(null);
+    setPendingImageFile(null);
     setAccountDetails(null);
     setEstimatedCost(null);
     setEstimateTimestamp(null);
@@ -599,7 +613,12 @@ function App() {
   async function encrypt(plaintext, key) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const aesKey = await crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['encrypt']);
-    const encoded = new TextEncoder().encode(plaintext);
+    const encoded =
+      typeof plaintext === 'string'
+        ? new TextEncoder().encode(plaintext)
+        : plaintext instanceof Uint8Array
+          ? plaintext
+          : new Uint8Array(plaintext);
     const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, encoded);
     return { cipher: new Uint8Array(cipher), iv };
   }
@@ -610,14 +629,27 @@ function App() {
     return new TextDecoder().decode(new Uint8Array(plaintext));
   }
 
+  async function decryptBytes(cipher, key, iv) {
+    const aesKey = await crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt']);
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, cipher);
+    return new Uint8Array(plaintext);
+  }
+
   async function loadSeeds() {
     setLoading(true);
     try {
       const names = await backendActor.get_seed_names();
-      setSeedNames(names);
+      const normalized = names.map((entry) => entry.name || entry);
+      const imageMap = names.reduce((acc, entry) => {
+        const key = entry.name || entry;
+        acc[key] = Boolean(entry.has_image);
+        return acc;
+      }, {});
+      setHasImages(imageMap);
+      setSeedNames(normalized);
       setDecryptedSeeds((current) => {
         const retained = {};
-        names.forEach((seedName) => {
+        normalized.forEach((seedName) => {
           if (current[seedName]) {
             retained[seedName] = current[seedName];
           }
@@ -626,7 +658,7 @@ function App() {
       });
       setHiddenSeeds((current) => {
         const retained = {};
-        names.forEach((seedName) => {
+        normalized.forEach((seedName) => {
           if (seedName in current) {
             retained[seedName] = current[seedName];
           }
@@ -764,6 +796,12 @@ function App() {
               : new Uint8Array(vetKey);
       const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
       const phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
+      const cipherBase64 = btoa(String.fromCharCode(...new Uint8Array(cipher)));
+      const ivBase64 = btoa(String.fromCharCode(...new Uint8Array(iv)));
+      setEncryptedSnapshots((prev) => ({
+        ...prev,
+        [normalizedName]: { cipher: cipherBase64, iv: ivBase64 },
+      }));
       persistDecryptedSeed(normalizedName, phraseText);
       await loadAccount();
 
@@ -771,6 +809,121 @@ function App() {
       setStatus(`"${normalizedName}" decrypted successfully. Auto-clearing in ${Math.floor(SEED_TTL_MS / 60000)} minutes.`);
     } catch (error) {
       setStatus(`Failed to decrypt "${normalizedName}". Please try again.`);
+    } finally {
+      setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
+      setLoading(false);
+    }
+  }
+
+  async function addImageToSeed(seedName) {
+    if (!pendingImageFile) {
+      setStatus('Select an image before uploading.');
+      return;
+    }
+
+    const nameValidation = validateSeedNameClient(seedName);
+    if (!nameValidation.ok) {
+      setStatus(nameValidation.error);
+      return;
+    }
+    const normalizedName = nameValidation.value;
+
+    const [encryptEstimate, deriveEstimate] = await Promise.all([
+      backendActor.estimate_cost('encrypt', 1),
+      backendActor.estimate_cost('derive', 1),
+    ]);
+    const fallback = encryptEstimate.fallback_used || deriveEstimate.fallback_used;
+    const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+    const confirmed = window.confirm(
+      `Encrypting an image for "${normalizedName}" will cost ~${formatIcp(required)} ICP (including ledger fee).${
+        fallback ? ' (Using fallback exchange rate estimate.)' : ''
+      } Continue?`,
+    );
+    if (!confirmed) return;
+
+    setStatus('Preparing image upload...');
+    setLoading(true);
+    try {
+      await waitForBalance(required, `Please transfer at least ${formatIcp(required)} ICP to proceed.`);
+      const key = await deriveSymmetricKey(normalizedName);
+      const { cipher, iv } = await encrypt(pendingImageFile, key);
+      const result = await backendActor.add_image(normalizedName, cipher, iv);
+      if ('err' in result) {
+        throw new Error(result.err);
+      }
+      setHasImages((prev) => ({ ...prev, [normalizedName]: true }));
+      setPendingImageFile(null);
+      setAddingImageFor(null);
+      setStatus('Image uploaded and encrypted.');
+      await loadAccount();
+    } catch (error) {
+      setStatus(error.message || 'Failed to upload image.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function decryptImage(seedName) {
+    const validation = validateSeedNameClient(seedName);
+    if (!validation.ok) {
+      setStatus(validation.error);
+      return;
+    }
+    const normalizedName = validation.value;
+    setStatus(`Preparing to decrypt image for "${normalizedName}"...`);
+    setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
+    try {
+      const [decryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('decrypt', 1),
+        backendActor.estimate_cost('derive', 1),
+      ]);
+      const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+      const confirmed = window.confirm(
+        `Decrypting the image for "${normalizedName}" will cost ~${formatIcp(required)} ICP.${
+          fallback ? ' (Using fallback exchange rate estimate.)' : ''
+        } Continue?`,
+      );
+      if (!confirmed) {
+        setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
+        return;
+      }
+
+      setLoading(true);
+      await waitForBalance(required, `Please transfer at least ${formatIcp(required)} ICP to proceed.`);
+
+      const transportSecretKey = TransportSecretKey.random();
+      const result = await backendActor.get_image_cipher_and_key(
+        normalizedName,
+        transportSecretKey.publicKeyBytes(),
+      );
+      if ('err' in result) {
+        throw new Error(result.err);
+      }
+      const [cipher, iv, encryptedKeyBytes] = result.ok;
+
+      const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
+      const derivedPublicKeyBytes = await backendActor.public_key();
+      const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
+      const input = new TextEncoder().encode(normalizedName);
+      const vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
+      const vetKeyBytes =
+        vetKey instanceof Uint8Array
+          ? vetKey
+          : vetKey instanceof ArrayBuffer
+            ? new Uint8Array(vetKey)
+            : ArrayBuffer.isView(vetKey)
+              ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
+              : new Uint8Array(vetKey);
+      const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
+      const plaintext = await decryptBytes(new Uint8Array(cipher), primary, new Uint8Array(iv));
+      const blob = new Blob([plaintext], { type: 'image/png' });
+      const url = URL.createObjectURL(blob);
+      setDecryptedImages((prev) => ({ ...prev, [normalizedName]: url }));
+      setStatus('Image decrypted.');
+      await loadAccount();
+    } catch (error) {
+      setStatus(error.message || 'Failed to decrypt image.');
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
@@ -810,6 +963,11 @@ function App() {
         return updated;
       });
       setSeedExpirations((prev) => {
+        const updated = { ...prev };
+        delete updated[normalizedName];
+        return updated;
+      });
+      setDecryptedImages((prev) => {
         const updated = { ...prev };
         delete updated[normalizedName];
         return updated;
@@ -884,13 +1042,29 @@ function App() {
       setStatus(`Encrypting and saving "${trimmedName}"...`);
       const key = await deriveSymmetricKey(trimmedName);
       const { cipher, iv } = await encrypt(trimmedPhrase, key);
-      const result = await backendActor.add_seed(trimmedName, cipher, iv);
+      let imageCipherOpt = [];
+      let imageIvOpt = [];
+      if (imageFile) {
+        const { cipher: imgCipher, iv: imgIv } = await encrypt(imageFile, key);
+        imageCipherOpt = [imgCipher];
+        imageIvOpt = [imgIv];
+      }
+      const result = await backendActor.add_seed(trimmedName, cipher, iv, imageCipherOpt, imageIvOpt);
       if ('err' in result) {
         setStatus(result.err);
         return;
       }
       setName('');
       setPhrase('');
+      setImageFile(null);
+      setImagePreviewName('');
+      setEncryptedSnapshots((prev) => ({
+        ...prev,
+        [trimmedName]: {
+          cipher: btoa(String.fromCharCode(...cipher)),
+          iv: btoa(String.fromCharCode(...iv)),
+        },
+      }));
       await loadSeeds();
       await loadAccount();
       setStatus('Seed saved');
@@ -1187,6 +1361,36 @@ function App() {
                   Avoid storing secrets on shared or untrusted devices. Decrypted data is only kept in memory briefly.
                 </p>
               </label>
+              <label>
+                Upload image (optional, max 1MB)
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) {
+                      setImageFile(null);
+                      setImagePreviewName('');
+                      return;
+                    }
+                    if (file.size > 1_048_576) {
+                      setStatus('Image too large. Max size is 1MB.');
+                      setImageFile(null);
+                      setImagePreviewName('');
+                      return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      if (reader.result) {
+                        setImageFile(new Uint8Array(reader.result));
+                        setImagePreviewName(file.name);
+                      }
+                    };
+                    reader.readAsArrayBuffer(file);
+                  }}
+                />
+                {imagePreviewName && <p className="muted">Selected: {imagePreviewName}</p>}
+              </label>
               <button
                 type="submit"
                 disabled={!name || !phrase || name.length > MAX_SEED_NAME_CHARS || isAddingSeed || loading}
@@ -1248,6 +1452,23 @@ function App() {
                             </button>
                             <button
                               type="button"
+                              onClick={() =>
+                                setShowEncrypted((prev) => ({
+                                  ...prev,
+                                  [seedName]: !prev[seedName],
+                                }))
+                              }
+                            >
+                              {showEncrypted[seedName] ? 'Show decrypted' : 'Show encrypted'}
+                            </button>
+                            {showEncrypted[seedName] && encryptedSnapshots[seedName] && (
+                              <div className="encrypted-view">
+                                <p className="muted">Cipher (base64): {encryptedSnapshots[seedName].cipher}</p>
+                                <p className="muted">IV (base64): {encryptedSnapshots[seedName].iv}</p>
+                              </div>
+                            )}
+                            <button
+                              type="button"
                               className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
                               onClick={async () => {
                                 if (hiddenSeeds[seedName]) {
@@ -1287,6 +1508,12 @@ function App() {
                             </button>
                           </>
                         )}
+                        {decryptedImages[seedName] && (
+                          <div className="image-preview">
+                            <p className="muted">Decrypted image preview</p>
+                            <img src={decryptedImages[seedName]} alt={`Seed ${seedName} attachment`} />
+                          </div>
+                        )}
                       </div>
                       <div className="seed-actions">
                         {!decryptedSeeds[seedName] && (
@@ -1299,6 +1526,23 @@ function App() {
                             {decryptingSeeds[seedName] && <span className="loading-spinner" />}
                           </button>
                         )}
+                        {hasImages[seedName] && (
+                          <button
+                            onClick={() => decryptImage(seedName)}
+                            disabled={decryptingSeeds[seedName] || loading || deletingSeeds[seedName]}
+                            className={decryptingSeeds[seedName] ? 'button-loading' : ''}
+                          >
+                            Decrypt image
+                            {decryptingSeeds[seedName] && <span className="loading-spinner" />}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setAddingImageFor(seedName)}
+                          disabled={loading}
+                        >
+                          Add image
+                        </button>
                         <button
                           onClick={() => deleteSeed(seedName)}
                           disabled={decryptingSeeds[seedName] || deletingSeeds[seedName] || loading}
@@ -1309,6 +1553,49 @@ function App() {
                         </button>
                       </div>
                     </div>
+                    {addingImageFor === seedName && (
+                      <div className="callout">
+                        <p className="muted">Attach an image to "{seedName}" (max 1MB)</p>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) {
+                              setPendingImageFile(null);
+                              return;
+                            }
+                            if (file.size > 1_048_576) {
+                              setStatus('Image too large. Max size is 1MB.');
+                              setPendingImageFile(null);
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (reader.result) {
+                                setPendingImageFile(new Uint8Array(reader.result));
+                              }
+                            };
+                            reader.readAsArrayBuffer(file);
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                          <button type="button" onClick={() => addImageToSeed(seedName)} disabled={loading}>
+                            Save image
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddingImageFor(null);
+                              setPendingImageFile(null);
+                            }}
+                            disabled={loading}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
