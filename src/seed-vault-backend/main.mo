@@ -162,9 +162,12 @@ persistent actor Self {
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
 
-  let RATE_LIMIT : Nat = 20; // operations per reset interval (tighter client-side envelope)
-  let GLOBAL_RATE_LIMIT : Nat = 200; // overall operations per reset interval
-  let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
+  // Loosen rate limits and shorten the reset window to reduce spurious rejections
+  // during heavier usage (for example, when users add images and decrypt multiple
+  // seeds in quick succession).
+  let RATE_LIMIT : Nat = 100; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 1_000; // overall operations per reset interval
+  let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
 
   // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
   private func ensureSeedsMigrated() {
@@ -840,14 +843,6 @@ persistent actor Self {
     if (cipherArr.size() > MAX_SEED_CIPHER_BYTES) {
       return #err("Seed phrase too long. Limit is 420 characters.");
     };
-    var j : Nat = 0;
-    label checkCipher while (j < cipherArr.size()) {
-      if (cipherArr[j] == 0) {
-        return #err("Ciphertext contains unsupported bytes");
-      };
-      j += 1;
-    };
-
     switch (image_cipher, image_iv) {
       case (?imgCipher, ?imgIv) {
         let imgArr = Blob.toArray(imgCipher);

@@ -857,7 +857,12 @@ function App() {
       setStatus('Image uploaded and encrypted.');
       await loadAccount();
     } catch (error) {
-      setStatus(error.message || 'Failed to upload image.');
+      const message = error?.message || 'Failed to upload image.';
+      if (message.toLowerCase().includes('rate limit')) {
+        setStatus(`${message} Please wait a minute and try again.`);
+      } else {
+        setStatus(message);
+      }
     } finally {
       setLoading(false);
     }
