@@ -994,7 +994,7 @@ persistent actor Self {
         case null { return #err("No seeds found for this user") };
         case (?idx) {
           let (owner, seeds) = seedsByOwner[idx];
-            var updated = Array.tabulate<Seed>(seeds.size(), func(i : Nat) : Seed { seeds[i] });
+            var updated = Array.tabulateVar<Seed>(seeds.size(), func(i : Nat) : Seed { seeds[i] });
           var found = false;
 
           var i : Nat = 0;
@@ -1018,11 +1018,13 @@ persistent actor Self {
             return #err("Seed not found: " # normalizedName);
           };
 
+          let immutableUpdated = Array.freeze<Seed>(updated);
+
           let updatedOwners = Array.tabulate<(Principal, [Seed])>(
             seedsByOwner.size(),
             func(j : Nat) : (Principal, [Seed]) {
               if (j == idx) {
-                (owner, updated)
+                (owner, immutableUpdated)
               } else {
                 seedsByOwner[j]
               }
