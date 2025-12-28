@@ -186,6 +186,7 @@ function App() {
   const [hasImages, setHasImages] = useState({});
   const [decryptedImages, setDecryptedImages] = useState({});
   const [imageFile, setImageFile] = useState(null);
+  const [enlargedImage, setEnlargedImage] = useState(null);
   const [imagePreviewName, setImagePreviewName] = useState('');
   const [addingImageFor, setAddingImageFor] = useState(null);
   const [pendingImageFile, setPendingImageFile] = useState(null);
@@ -1516,7 +1517,11 @@ function App() {
                         {decryptedImages[seedName] && (
                           <div className="image-preview">
                             <p className="muted">Decrypted image preview</p>
-                            <img src={decryptedImages[seedName]} alt={`Seed ${seedName} attachment`} />
+                            <img
+                              src={decryptedImages[seedName]}
+                              alt={`Seed ${seedName} attachment`}
+                              onClick={() => setEnlargedImage(decryptedImages[seedName])}
+                            />
                           </div>
                         )}
                       </div>
@@ -1612,6 +1617,11 @@ function App() {
           <h2>Welcome</h2>
           <p>Authenticate with Internet Identity to view and add encrypted seed phrases.</p>
         </section>
+      )}
+      {enlargedImage && (
+        <div className="modal" onClick={() => setEnlargedImage(null)}>
+          <img src={enlargedImage} alt="Enlarged view" />
+        </div>
       )}
     </main>
   );
