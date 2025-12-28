@@ -473,7 +473,8 @@ function App() {
         ]);
         const fallback =
           encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-        const costE8s = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+        const maxOp = Math.max(Number(encryptEstimate.icp_e8s || 0), Number(decryptEstimate.icp_e8s || 0));
+        const costE8s = Number(maxOp + Number(deriveEstimate.icp_e8s || 0)) + LEDGER_FEE_E8S;
         setEstimatedCost(formatIcp(costE8s));
 
         let pricingSnapshot = null;
@@ -850,7 +851,8 @@ function App() {
         )} minutes.`,
       );
     } catch (error) {
-      setStatus(`Failed to decrypt "${normalizedName}". Please try again.`);
+      const message = error?.message ? `: ${error.message}` : '';
+      setStatus(`Failed to decrypt "${normalizedName}"${message}. Please try again.`);
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);

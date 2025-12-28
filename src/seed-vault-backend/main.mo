@@ -742,15 +742,17 @@ persistent actor Self {
     icp_e8s : Nat;
     fallback_used : Bool;
   } {
-    switch (checkRateLimit(caller)) {
-      case (#err(msg)) { return { cycles = 0; icp_e8s = 0; fallback_used = true } };
-      case (#ok(())) {};
+    // Estimation should still succeed even if the caller is temporarily rate limited
+    // so the UI can display a realistic amount instead of falling back to zero.
+    let rateLimited = switch (checkRateLimit(caller)) {
+      case (#err(_)) { true };
+      case (#ok(())) { false };
     };
 
     let cycles = operationCycles(operation, count);
     let { icp_e8s; fallback_used } = await cyclesToIcp(cycles);
     var capped = icp_e8s;
-    var fallback = fallback_used;
+    var fallback = fallback_used or rateLimited;
     if (icp_e8s > MAX_OPERATION_COST_E8S) {
       capped := MAX_OPERATION_COST_E8S;
       fallback := true;
