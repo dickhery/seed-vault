@@ -8,6 +8,25 @@ export const idlFactory = ({ IDL }) => {
     'ok' : IDL.Tuple(IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)),
     'err' : IDL.Text,
   });
+  const Result_5 = IDL.Variant({
+    'ok' : IDL.Tuple(
+      IDL.Vec(IDL.Nat8),
+      IDL.Vec(IDL.Nat8),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+    ),
+    'err' : IDL.Text,
+  });
+  const Result_4 = IDL.Variant({
+    'ok' : IDL.Tuple(
+      IDL.Vec(IDL.Nat8),
+      IDL.Vec(IDL.Nat8),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Vec(IDL.Nat8),
+    ),
+    'err' : IDL.Text,
+  });
   const Result = IDL.Variant({ 'ok' : IDL.Nat, 'err' : IDL.Text });
   return IDL.Service({
     'add_image' : IDL.Func([
@@ -64,6 +83,12 @@ export const idlFactory = ({ IDL }) => {
     'get_seed_cipher_and_key' : IDL.Func(
         [IDL.Text, IDL.Vec(IDL.Nat8)],
         [Result_1],
+        [],
+      ),
+    'get_seed_and_image_ciphers' : IDL.Func([IDL.Text], [Result_5], []),
+    'get_seed_and_image_ciphers_and_key' : IDL.Func(
+        [IDL.Text, IDL.Vec(IDL.Nat8)],
+        [Result_4],
         [],
       ),
     'get_seed_names' : IDL.Func(

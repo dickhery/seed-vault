@@ -700,6 +700,11 @@ function App() {
       delete next[seedName];
       return next;
     });
+    setDecryptedImages((prev) => {
+      const next = { ...prev };
+      delete next[seedName];
+      return next;
+    });
     setSeedExpirations((prev) => {
       const next = { ...prev };
       delete next[seedName];
@@ -717,7 +722,7 @@ function App() {
     });
   }
 
-  async function decryptSeed(seedName) {
+  async function decryptAllForSeed(seedName) {
     const validation = validateSeedNameClient(seedName);
     if (!validation.ok) {
       setStatus(validation.error);
@@ -728,21 +733,22 @@ function App() {
       setStatus('Identity is not ready yet. Please re-authenticate.');
       return;
     }
+    const hasImage = hasImages[seedName];
+    const decryptOps = hasImage ? 2 : 1;
     setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
-    setStatus(`Preparing to decrypt "${normalizedName}"...`);
+    setStatus(`Preparing to decrypt "${normalizedName}"${hasImage ? ' and image' : ''}...`);
     try {
-      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
-        backendActor.estimate_cost('encrypt', 1),
-        backendActor.estimate_cost('decrypt', 1),
+      const [decryptEstimate, deriveEstimate] = await Promise.all([
+        backendActor.estimate_cost('decrypt', decryptOps),
         backendActor.estimate_cost('derive', 1),
       ]);
-        const fallback =
-          encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-        const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-        const confirmed = window.confirm(
-        `Decrypting "${normalizedName}" will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
-          fallback ? ' (Using fallback exchange rate estimate.)' : ''
-        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed will auto-hide and clear after 5 minutes.`,
+      const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
+      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+      const costNote = hasImage && decryptOps > 1 ? ' (includes image decryption)' : '';
+      const confirmed = window.confirm(
+        `Decrypting "${normalizedName}"${hasImage ? ' and its image' : ''} will cost ~${formatIcp(required)} ICP${
+          costNote
+        }.${fallback ? ' (Using fallback exchange rate estimate.)' : ''} Continue?\n\nWarning: Decrypt only on trusted devices. Seed and image will auto-hide and clear after 5 minutes.`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
@@ -760,21 +766,21 @@ function App() {
       }
 
       setLoading(true);
-      setStatus(`Attempting payment for decryption of "${normalizedName}"...`);
+      setStatus(`Attempting payment for decryption of "${normalizedName}"${hasImage ? ' and image' : ''}...`);
       await waitForBalance(
         required,
         `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
       );
-      setStatus(`Decrypting "${seedName}"...`);
+      setStatus(`Decrypting "${seedName}"${hasImage ? ' and image' : ''}...`);
       const transportSecretKey = TransportSecretKey.random();
-      const result = await backendActor.get_seed_cipher_and_key(
+      const result = await backendActor.get_seed_and_image_ciphers_and_key(
         normalizedName,
         transportSecretKey.publicKeyBytes(),
       );
       if ('err' in result) {
         throw new Error(result.err);
       }
-      const [cipher, iv, encryptedKeyBytes] = result.ok;
+      const [seedCipher, seedIv, imageCipherOpt, imageIvOpt, encryptedKeyBytes] = result.ok;
 
       const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
       const derivedPublicKeyBytes = await backendActor.public_key();
@@ -796,24 +802,88 @@ function App() {
               ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
               : new Uint8Array(vetKey);
       const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
-      const phraseText = await decrypt(new Uint8Array(cipher), primary, new Uint8Array(iv));
-      const cipherBase64 = btoa(String.fromCharCode(...new Uint8Array(cipher)));
-      const ivBase64 = btoa(String.fromCharCode(...new Uint8Array(iv)));
+      const phraseText = await decrypt(new Uint8Array(seedCipher), primary, new Uint8Array(seedIv));
+
+      if (imageCipherOpt && imageIvOpt) {
+        const plaintextImage = await decryptBytes(
+          new Uint8Array(imageCipherOpt),
+          primary,
+          new Uint8Array(imageIvOpt),
+        );
+        const blob = new Blob([plaintextImage], { type: 'image/png' });
+        const url = URL.createObjectURL(blob);
+        setDecryptedImages((prev) => ({ ...prev, [normalizedName]: url }));
+      }
+
+      const seedCipherB64 = btoa(String.fromCharCode(...new Uint8Array(seedCipher)));
+      const seedIvB64 = btoa(String.fromCharCode(...new Uint8Array(seedIv)));
+      const imageCipherB64 = imageCipherOpt ? btoa(String.fromCharCode(...new Uint8Array(imageCipherOpt))) : null;
+      const imageIvB64 = imageIvOpt ? btoa(String.fromCharCode(...new Uint8Array(imageIvOpt))) : null;
       setEncryptedSnapshots((prev) => ({
         ...prev,
-        [normalizedName]: { cipher: cipherBase64, iv: ivBase64 },
+        [normalizedName]: {
+          seed_cipher: seedCipherB64,
+          seed_iv: seedIvB64,
+          image_cipher: imageCipherB64,
+          image_iv: imageIvB64,
+        },
       }));
+
       persistDecryptedSeed(normalizedName, phraseText);
       await loadAccount();
 
       backendActor.convert_collected_icp?.().catch(() => {});
-      setStatus(`"${normalizedName}" decrypted successfully. Auto-clearing in ${Math.floor(SEED_TTL_MS / 60000)} minutes.`);
+      setStatus(
+        `"${normalizedName}"${hasImage ? ' and its image' : ''} decrypted successfully. Auto-clearing in ${Math.floor(
+          SEED_TTL_MS / 60000,
+        )} minutes.`,
+      );
     } catch (error) {
       setStatus(`Failed to decrypt "${normalizedName}". Please try again.`);
     } finally {
       setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
     }
+  }
+
+  async function viewEncryptedForSeed(seedName) {
+    const validation = validateSeedNameClient(seedName);
+    if (!validation.ok) {
+      setStatus(validation.error);
+      return;
+    }
+    const normalizedName = validation.value;
+    try {
+      const result = await backendActor.get_seed_and_image_ciphers(normalizedName);
+      if ('err' in result) {
+        throw new Error(result.err);
+      }
+      const [seedCipher, seedIv, imageCipherOpt, imageIvOpt] = result.ok;
+      const seedCipherB64 = btoa(String.fromCharCode(...new Uint8Array(seedCipher)));
+      const seedIvB64 = btoa(String.fromCharCode(...new Uint8Array(seedIv)));
+      const imageCipherB64 = imageCipherOpt ? btoa(String.fromCharCode(...new Uint8Array(imageCipherOpt))) : null;
+      const imageIvB64 = imageIvOpt ? btoa(String.fromCharCode(...new Uint8Array(imageIvOpt))) : null;
+      setEncryptedSnapshots((prev) => ({
+        ...prev,
+        [normalizedName]: {
+          seed_cipher: seedCipherB64,
+          seed_iv: seedIvB64,
+          image_cipher: imageCipherB64,
+          image_iv: imageIvB64,
+        },
+      }));
+      setShowEncrypted((prev) => ({ ...prev, [seedName]: true }));
+    } catch (error) {
+      setStatus(`Failed to fetch encrypted data for "${normalizedName}". Please try again.`);
+    }
+  }
+
+  async function toggleEncryptedView(seedName) {
+    if (showEncrypted[seedName]) {
+      setShowEncrypted((prev) => ({ ...prev, [seedName]: false }));
+      return;
+    }
+    await viewEncryptedForSeed(seedName);
   }
 
   async function addImageToSeed(seedName) {
@@ -865,73 +935,6 @@ function App() {
         setStatus(message);
       }
     } finally {
-      setLoading(false);
-    }
-  }
-
-  async function decryptImage(seedName) {
-    const validation = validateSeedNameClient(seedName);
-    if (!validation.ok) {
-      setStatus(validation.error);
-      return;
-    }
-    const normalizedName = validation.value;
-    setStatus(`Preparing to decrypt image for "${normalizedName}"...`);
-    setDecryptingSeeds((prev) => ({ ...prev, [seedName]: true }));
-    try {
-      const [decryptEstimate, deriveEstimate] = await Promise.all([
-        backendActor.estimate_cost('decrypt', 1),
-        backendActor.estimate_cost('derive', 1),
-      ]);
-      const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-      const confirmed = window.confirm(
-        `Decrypting the image for "${normalizedName}" will cost ~${formatIcp(required)} ICP.${
-          fallback ? ' (Using fallback exchange rate estimate.)' : ''
-        } Continue?`,
-      );
-      if (!confirmed) {
-        setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
-        return;
-      }
-
-      setLoading(true);
-      await waitForBalance(required, `Please transfer at least ${formatIcp(required)} ICP to proceed.`);
-
-      const transportSecretKey = TransportSecretKey.random();
-      const result = await backendActor.get_image_cipher_and_key(
-        normalizedName,
-        transportSecretKey.publicKeyBytes(),
-      );
-      if ('err' in result) {
-        throw new Error(result.err);
-      }
-      const [cipher, iv, encryptedKeyBytes] = result.ok;
-
-      const encryptedVetKey = EncryptedVetKey.deserialize(new Uint8Array(encryptedKeyBytes));
-      const derivedPublicKeyBytes = await backendActor.public_key();
-      const derivedPublicKey = DerivedPublicKey.deserialize(new Uint8Array(derivedPublicKeyBytes));
-      const input = new TextEncoder().encode(normalizedName);
-      const vetKey = encryptedVetKey.decryptAndVerify(transportSecretKey, derivedPublicKey, input);
-      const vetKeyBytes =
-        vetKey instanceof Uint8Array
-          ? vetKey
-          : vetKey instanceof ArrayBuffer
-            ? new Uint8Array(vetKey)
-            : ArrayBuffer.isView(vetKey)
-              ? new Uint8Array(vetKey.buffer, vetKey.byteOffset, vetKey.byteLength)
-              : new Uint8Array(vetKey);
-      const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
-      const plaintext = await decryptBytes(new Uint8Array(cipher), primary, new Uint8Array(iv));
-      const blob = new Blob([plaintext], { type: 'image/png' });
-      const url = URL.createObjectURL(blob);
-      setDecryptedImages((prev) => ({ ...prev, [normalizedName]: url }));
-      setStatus('Image decrypted.');
-      await loadAccount();
-    } catch (error) {
-      setStatus(error.message || 'Failed to decrypt image.');
-    } finally {
-      setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
       setLoading(false);
     }
   }
@@ -1050,10 +1053,14 @@ function App() {
       const { cipher, iv } = await encrypt(trimmedPhrase, key);
       let imageCipherOpt = [];
       let imageIvOpt = [];
+      let imageCipherB64 = null;
+      let imageIvB64 = null;
       if (imageFile) {
         const { cipher: imgCipher, iv: imgIv } = await encrypt(imageFile, key);
         imageCipherOpt = [imgCipher];
         imageIvOpt = [imgIv];
+        imageCipherB64 = btoa(String.fromCharCode(...imgCipher));
+        imageIvB64 = btoa(String.fromCharCode(...imgIv));
       }
       const result = await backendActor.add_seed(trimmedName, cipher, iv, imageCipherOpt, imageIvOpt);
       if ('err' in result) {
@@ -1067,8 +1074,10 @@ function App() {
       setEncryptedSnapshots((prev) => ({
         ...prev,
         [trimmedName]: {
-          cipher: btoa(String.fromCharCode(...cipher)),
-          iv: btoa(String.fromCharCode(...iv)),
+          seed_cipher: btoa(String.fromCharCode(...cipher)),
+          seed_iv: btoa(String.fromCharCode(...iv)),
+          image_cipher: imageCipherB64,
+          image_iv: imageIvB64,
         },
       }));
       await loadSeeds();
@@ -1459,17 +1468,6 @@ function App() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() =>
-                                  setShowEncrypted((prev) => ({
-                                    ...prev,
-                                    [seedName]: !prev[seedName],
-                                  }))
-                                }
-                              >
-                                {showEncrypted[seedName] ? 'Show decrypted' : 'Show encrypted'}
-                              </button>
-                              <button
-                                type="button"
                                 className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
                                 onClick={async () => {
                                   if (hiddenSeeds[seedName]) {
@@ -1511,13 +1509,23 @@ function App() {
                             {showEncrypted[seedName] && encryptedSnapshots[seedName] && (
                               <div className="encrypted-view">
                                 <p className="muted">
-                                  This seed phrase is encrypted with AES-GCM and stored on-chain. Only your
-                                  vetKey, derived via the Internet Computer&apos;s vetKD protocol, can decrypt it.
-                                  The cipher is the encrypted data and the IV is the initialization vector used
-                                  during encryption.
+                                  These payloads are encrypted with AES-GCM using a vetKey derived via the
+                                  Internet Computer&apos;s vetKD protocol. Only your vetKey can decrypt them.
                                 </p>
-                                <p className="muted">Cipher (base64): {encryptedSnapshots[seedName].cipher}</p>
-                                <p className="muted">IV (base64): {encryptedSnapshots[seedName].iv}</p>
+                                <p className="muted">
+                                  Seed Cipher (base64): {encryptedSnapshots[seedName].seed_cipher}
+                                </p>
+                                <p className="muted">Seed IV (base64): {encryptedSnapshots[seedName].seed_iv}</p>
+                                {encryptedSnapshots[seedName].image_cipher && (
+                                  <>
+                                    <p className="muted">
+                                      Image Cipher (base64): {encryptedSnapshots[seedName].image_cipher}
+                                    </p>
+                                    <p className="muted">
+                                      Image IV (base64): {encryptedSnapshots[seedName].image_iv}
+                                    </p>
+                                  </>
+                                )}
                               </div>
                             )}
                           </>
@@ -1536,24 +1544,21 @@ function App() {
                       <div className="seed-actions">
                         {!decryptedSeeds[seedName] && (
                           <button
-                            onClick={() => decryptSeed(seedName)}
+                            onClick={() => decryptAllForSeed(seedName)}
                             disabled={decryptingSeeds[seedName] || loading || deletingSeeds[seedName]}
                             className={decryptingSeeds[seedName] ? 'button-loading' : ''}
                           >
-                            Decrypt
+                            Decrypt{hasImages[seedName] ? ' all' : ''}
                             {decryptingSeeds[seedName] && <span className="loading-spinner" />}
                           </button>
                         )}
-                        {hasImages[seedName] && (
-                          <button
-                            onClick={() => decryptImage(seedName)}
-                            disabled={decryptingSeeds[seedName] || loading || deletingSeeds[seedName]}
-                            className={decryptingSeeds[seedName] ? 'button-loading' : ''}
-                          >
-                            Decrypt image
-                            {decryptingSeeds[seedName] && <span className="loading-spinner" />}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleEncryptedView(seedName)}
+                          disabled={loading || decryptingSeeds[seedName]}
+                        >
+                          {showEncrypted[seedName] ? 'Hide encrypted' : 'View encrypted'}
+                        </button>
                         <button
                           type="button"
                           onClick={() => setAddingImageFor(seedName)}
