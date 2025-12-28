@@ -279,7 +279,7 @@ persistent actor Self {
     auditLogs := newTrie;
   };
 
-  private func checkRateLimit(caller : Principal) : Result.Result<(), Text> {
+  private func checkRateLimitInternal(caller : Principal, increment : Bool) : Result.Result<(), Text> {
     let now = Time.now();
     let key = callerKey(caller);
 
@@ -296,12 +296,15 @@ persistent actor Self {
         "Global rate limit reached. Please retry in ~" # Int.toText(retryMs) # " ms to protect other users.",
       );
     };
-    globalOps += 1;
+    if (increment) {
+      globalOps += 1;
+    };
 
     switch (Trie.find(userOps, key, Principal.equal)) {
       case (? (count, lastReset)) {
         if (now < lastReset or now - lastReset >= RESET_INTERVAL) {
-          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
+          let newCount = if (increment) { 1 } else { 0 };
+          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (newCount, now));
           userOps := updatedTrie;
           #ok(())
         } else if (count >= RATE_LIMIT) {
@@ -309,17 +312,28 @@ persistent actor Self {
           let retryMs = Int.min(retryNs, RESET_INTERVAL) / 1_000_000;
           #err("Rate limit exceeded. Try again in ~" # Int.toText(retryMs) # " ms.")
         } else {
-          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (count + 1, lastReset));
+          let nextCount = if (increment) { count + 1 } else { count };
+          let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (nextCount, lastReset));
           userOps := updatedTrie;
           #ok(())
         }
       };
       case null {
-        let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
+        let newCount = if (increment) { 1 } else { 0 };
+        let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (newCount, now));
         userOps := updatedTrie;
         #ok(())
       };
     }
+  };
+
+  private func checkRateLimit(caller : Principal) : Result.Result<(), Text> {
+    checkRateLimitInternal(caller, true)
+  };
+
+  // A non-mutating preview that avoids incrementing counters, so estimation calls don't exhaust the quota.
+  private func peekRateLimit(caller : Principal) : Result.Result<(), Text> {
+    checkRateLimitInternal(caller, false)
   };
 
   private func subaccount(principal : Principal) : Blob {
@@ -746,7 +760,7 @@ persistent actor Self {
   } {
     // Estimation should still succeed even if the caller is temporarily rate limited
     // so the UI can display a realistic amount instead of falling back to zero.
-    let rateLimited = switch (checkRateLimit(caller)) {
+    let rateLimited = switch (peekRateLimit(caller)) {
       case (#err(_)) { true };
       case (#ok(())) { false };
     };
