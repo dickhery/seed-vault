@@ -1467,7 +1467,6 @@ persistent actor Self {
       };
     };
   };
-  };
 
   public query func canister_cycles() : async Nat {
     ExperimentalCycles.balance()
