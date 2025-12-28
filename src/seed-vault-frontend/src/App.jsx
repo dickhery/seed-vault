@@ -636,6 +636,14 @@ function App() {
     return new Uint8Array(plaintext);
   }
 
+  function unwrapOptional(opt) {
+    if (opt === null || opt === undefined) return null;
+    if (Array.isArray(opt)) {
+      return opt.length ? opt[0] : null;
+    }
+    return opt;
+  }
+
   async function loadSeeds() {
     setLoading(true);
     try {
@@ -804,11 +812,14 @@ function App() {
       const { primary } = await deriveAesKeyVariantsFromVetKey(vetKeyBytes);
       const phraseText = await decrypt(new Uint8Array(seedCipher), primary, new Uint8Array(seedIv));
 
-      if (imageCipherOpt && imageIvOpt) {
+      const imageCipher = unwrapOptional(imageCipherOpt);
+      const imageIv = unwrapOptional(imageIvOpt);
+
+      if (imageCipher && imageIv) {
         const plaintextImage = await decryptBytes(
-          new Uint8Array(imageCipherOpt),
+          new Uint8Array(imageCipher),
           primary,
-          new Uint8Array(imageIvOpt),
+          new Uint8Array(imageIv),
         );
         const blob = new Blob([plaintextImage], { type: 'image/png' });
         const url = URL.createObjectURL(blob);
@@ -817,8 +828,8 @@ function App() {
 
       const seedCipherB64 = btoa(String.fromCharCode(...new Uint8Array(seedCipher)));
       const seedIvB64 = btoa(String.fromCharCode(...new Uint8Array(seedIv)));
-      const imageCipherB64 = imageCipherOpt ? btoa(String.fromCharCode(...new Uint8Array(imageCipherOpt))) : null;
-      const imageIvB64 = imageIvOpt ? btoa(String.fromCharCode(...new Uint8Array(imageIvOpt))) : null;
+      const imageCipherB64 = imageCipher ? btoa(String.fromCharCode(...new Uint8Array(imageCipher))) : null;
+      const imageIvB64 = imageIv ? btoa(String.fromCharCode(...new Uint8Array(imageIv))) : null;
       setEncryptedSnapshots((prev) => ({
         ...prev,
         [normalizedName]: {
@@ -859,10 +870,12 @@ function App() {
         throw new Error(result.err);
       }
       const [seedCipher, seedIv, imageCipherOpt, imageIvOpt] = result.ok;
+      const imageCipher = unwrapOptional(imageCipherOpt);
+      const imageIv = unwrapOptional(imageIvOpt);
       const seedCipherB64 = btoa(String.fromCharCode(...new Uint8Array(seedCipher)));
       const seedIvB64 = btoa(String.fromCharCode(...new Uint8Array(seedIv)));
-      const imageCipherB64 = imageCipherOpt ? btoa(String.fromCharCode(...new Uint8Array(imageCipherOpt))) : null;
-      const imageIvB64 = imageIvOpt ? btoa(String.fromCharCode(...new Uint8Array(imageIvOpt))) : null;
+      const imageCipherB64 = imageCipher ? btoa(String.fromCharCode(...new Uint8Array(imageCipher))) : null;
+      const imageIvB64 = imageIv ? btoa(String.fromCharCode(...new Uint8Array(imageIv))) : null;
       setEncryptedSnapshots((prev) => ({
         ...prev,
         [normalizedName]: {
