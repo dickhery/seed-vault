@@ -1447,71 +1447,79 @@ function App() {
                                 )}s`}
                               </p>
                             )}
-                            <button
-                              type="button"
-                              className="hide-button"
-                              onClick={() =>
-                                setHiddenSeeds((prev) => ({ ...prev, [seedName]: !prev[seedName] }))
-                              }
-                            >
-                              {hiddenSeeds[seedName] ? 'Show' : 'Hide'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowEncrypted((prev) => ({
-                                  ...prev,
-                                  [seedName]: !prev[seedName],
-                                }))
-                              }
-                            >
-                              {showEncrypted[seedName] ? 'Show decrypted' : 'Show encrypted'}
-                            </button>
+                            <div className="phrase-controls">
+                              <button
+                                type="button"
+                                className="hide-button"
+                                onClick={() =>
+                                  setHiddenSeeds((prev) => ({ ...prev, [seedName]: !prev[seedName] }))
+                                }
+                              >
+                                {hiddenSeeds[seedName] ? 'Show' : 'Hide'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShowEncrypted((prev) => ({
+                                    ...prev,
+                                    [seedName]: !prev[seedName],
+                                  }))
+                                }
+                              >
+                                {showEncrypted[seedName] ? 'Show decrypted' : 'Show encrypted'}
+                              </button>
+                              <button
+                                type="button"
+                                className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
+                                onClick={async () => {
+                                  if (hiddenSeeds[seedName]) {
+                                    setStatus('Reveal the seed phrase before copying.');
+                                    return;
+                                  }
+
+                                  if (!isSecureContext) {
+                                    setStatus('Copy is only available over HTTPS or localhost.');
+                                    return;
+                                  }
+
+                                  const confirmed = window.confirm(
+                                    'Warning: Copying exposes the seed phrase to your clipboard and other apps or extensions may read it. Only continue on a trusted device.',
+                                  );
+                                  if (!confirmed) {
+                                    setStatus('Copy cancelled.');
+                                    return;
+                                  }
+
+                                  try {
+                                    await navigator.clipboard.writeText(decryptedSeeds[seedName]);
+                                    setCopyStatuses((prev) => ({ ...prev, [seedName]: 'Copied!' }));
+                                    setTimeout(
+                                      () => setCopyStatuses((prev) => ({ ...prev, [seedName]: '' })),
+                                      2000,
+                                    );
+                                    setTimeout(() => {
+                                      navigator.clipboard.writeText('').catch(() => {});
+                                    }, 5000);
+                                  } catch (error) {
+                                    setStatus('Failed to copy. Please try again.');
+                                  }
+                                }}
+                              >
+                                {copyStatuses[seedName] || 'Copy'}
+                              </button>
+                            </div>
                             {showEncrypted[seedName] && encryptedSnapshots[seedName] && (
                               <div className="encrypted-view">
+                                <p className="muted">
+                                  This seed phrase is encrypted with AES-GCM and stored on-chain. Only your
+                                  vetKey, derived via the Internet Computer&apos;s vetKD protocol, can decrypt it.
+                                  The cipher is the encrypted data and the IV is the initialization vector used
+                                  during encryption.
+                                </p>
                                 <p className="muted">Cipher (base64): {encryptedSnapshots[seedName].cipher}</p>
                                 <p className="muted">IV (base64): {encryptedSnapshots[seedName].iv}</p>
                               </div>
                             )}
-                            <button
-                              type="button"
-                              className={`copy-button ${copyStatuses[seedName] === 'Copied!' ? 'copied' : ''}`}
-                              onClick={async () => {
-                                if (hiddenSeeds[seedName]) {
-                                  setStatus('Reveal the seed phrase before copying.');
-                                  return;
-                                }
-
-                                if (!isSecureContext) {
-                                  setStatus('Copy is only available over HTTPS or localhost.');
-                                  return;
-                                }
-
-                                const confirmed = window.confirm(
-                                  'Warning: Copying exposes the seed phrase to your clipboard and other apps or extensions may read it. Only continue on a trusted device.',
-                                );
-                                if (!confirmed) {
-                                  setStatus('Copy cancelled.');
-                                  return;
-                                }
-
-                                try {
-                                  await navigator.clipboard.writeText(decryptedSeeds[seedName]);
-                                  setCopyStatuses((prev) => ({ ...prev, [seedName]: 'Copied!' }));
-                                  setTimeout(
-                                    () => setCopyStatuses((prev) => ({ ...prev, [seedName]: '' })),
-                                    2000,
-                                  );
-                                  setTimeout(() => {
-                                    navigator.clipboard.writeText('').catch(() => {});
-                                  }, 5000);
-                                } catch (error) {
-                                  setStatus('Failed to copy. Please try again.');
-                                }
-                              }}
-                            >
-                              {copyStatuses[seedName] || 'Copy'}
-                            </button>
                           </>
                         )}
                         {decryptedImages[seedName] && (
@@ -1564,7 +1572,7 @@ function App() {
                       </div>
                     </div>
                     {addingImageFor === seedName && (
-                      <div className="callout">
+                      <div className="callout callout-inline">
                         <p className="muted">Attach an image to "{seedName}" (max 1MB)</p>
                         <input
                           type="file"
