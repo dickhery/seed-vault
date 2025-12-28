@@ -48,7 +48,8 @@ persistent actor Self {
   // XRC exchange rate types. Motoko reserves `class` as a keyword; the trailing
   // underscore keeps the Motoko identifier valid while Candid still serializes
   // the field name as `class` (the standard keyword-escape mapping in Motoko).
-  type XrcAsset = { symbol : Text; class_ : { #Cryptocurrency; #FiatCurrency } };
+  // Use backtick escape so the candid field name remains `class` as expected by XRC.
+  type XrcAsset = { symbol : Text; `class` : { #Cryptocurrency; #FiatCurrency } };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
   type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
   type Xrc = actor {
@@ -363,8 +364,8 @@ persistent actor Self {
     };
 
     let request : XrcGetExchangeRateRequest = {
-      base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
-      quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
+      base_asset = { symbol = "ICP"; `class` = #Cryptocurrency };
+      quote_asset = { symbol = "XDR"; `class` = #FiatCurrency };
       timestamp = null;
     };
     let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
