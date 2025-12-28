@@ -1267,10 +1267,12 @@ persistent actor Self {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
     };
+
     switch (checkRateLimit(caller)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
     };
+
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
@@ -1285,9 +1287,9 @@ persistent actor Self {
 
         switch (found) {
           case null { #err("Seed not found: " # normalizedName) };
-        case (?seed) {
-          switch (seed.image_cipher, seed.image_iv) {
-            case (?cipher, ?ivVal) {
+          case (?seed) {
+            switch (seed.image_cipher, seed.image_iv) {
+              case (?cipher, ?ivVal) {
                 let decryptCost = await estimate_cost("decrypt", 1);
                 let deriveCost = await estimate_cost("derive", 1);
                 let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
@@ -1324,7 +1326,8 @@ persistent actor Self {
                   #err("Failed to retrieve image");
                 };
               };
-            case _ { #err("No image found for this seed") };
+              case _ { #err("No image found for this seed") };
+            };
           };
         };
       };
