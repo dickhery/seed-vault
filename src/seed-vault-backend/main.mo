@@ -111,6 +111,7 @@ persistent actor Self {
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
   let MAX_SEED_CIPHER_BYTES : Nat = 2_048;
+  let MAX_IMAGE_BYTES : Nat = 1_048_576; // 1 MB limit for encrypted image payloads
   let MAX_SEED_NAME_CHARS : Nat = 100;
   let MAX_SEEDS_PER_USER : Nat = 50;
   let ENCRYPT_CYCLE_COST : Nat = 0;
@@ -134,8 +135,18 @@ persistent actor Self {
   let MINT_MEMO : Blob = Blob.fromArray([77, 73, 78, 84, 0, 0, 0, 0]); // "MINT\00\00\00\00"
   let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
 
-  // Stable-friendly storage mapping owner -> list of (seed name, cipher, iv)
+  type Seed = {
+    name : Text;
+    seed_cipher : Blob;
+    seed_iv : Blob;
+    image_cipher : ?Blob;
+    image_iv : ?Blob;
+  };
+
+  // Legacy storage (name, seed_cipher, seed_iv) preserved for upgrade compatibility.
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
+  // Current storage mapping owner -> list of seeds (including optional images).
+  stable var seedsByOwnerV2 : [(Principal, [Seed])] = [];
   // Remember the last successful XRC XDR/ICP rate so pricing stays fresh even if a later call fails.
   stable var last_xdr_per_icp_rate : Nat = 0;
   // Track when pricing was last refreshed so the frontend can present a meaningful timestamp and we can
@@ -151,14 +162,47 @@ persistent actor Self {
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
 
-  let RATE_LIMIT : Nat = 20; // operations per reset interval (tighter client-side envelope)
-  let GLOBAL_RATE_LIMIT : Nat = 200; // overall operations per reset interval
-  let RESET_INTERVAL : Int = 3_600_000_000_000; // 1 hour in nanoseconds
+  // Loosen rate limits and shorten the reset window to reduce spurious rejections
+  // during heavier usage (for example, when users add images and decrypt multiple
+  // seeds in quick succession).
+  let RATE_LIMIT : Nat = 100; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 1_000; // overall operations per reset interval
+  let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
+
+  // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
+  private func ensureSeedsMigrated() {
+    if (seedsByOwnerV2.size() == 0 and seedsByOwner.size() > 0) {
+      let migrated = Array.tabulate<(Principal, [Seed])>(
+        seedsByOwner.size(),
+        func(i : Nat) : (Principal, [Seed]) {
+          let (owner, legacySeeds) = seedsByOwner[i];
+          let converted = Array.tabulate<Seed>(
+            legacySeeds.size(),
+            func(j : Nat) : Seed {
+              let (n, c, iv) = legacySeeds[j];
+              {
+                name = n;
+                seed_cipher = c;
+                seed_iv = iv;
+                image_cipher = null;
+                image_iv = null;
+              }
+            },
+          );
+          (owner, converted)
+        },
+      );
+      seedsByOwnerV2 := migrated;
+      // Clear legacy data to avoid double-charging storage and keep future upgrades simpler.
+      seedsByOwner := [];
+    };
+  };
 
   private func findOwnerIndex(owner : Principal) : ?Nat {
+    ensureSeedsMigrated();
     var i : Nat = 0;
-    while (i < seedsByOwner.size()) {
-      let (p, _) = seedsByOwner[i];
+    while (i < seedsByOwnerV2.size()) {
+      let (p, _) = seedsByOwnerV2[i];
       if (Principal.equal(p, owner)) {
         return ?i;
       };
@@ -171,11 +215,11 @@ persistent actor Self {
     Text.equal(normalizeName(a), normalizeName(b))
   };
 
-  private func hasSeedName(seeds : [(Text, Blob, Blob)], name : Text) : Bool {
+  private func hasSeedName(seeds : [Seed], name : Text) : Bool {
     var i : Nat = 0;
     while (i < seeds.size()) {
-      let (n, _, _) = seeds[i];
-      if (sameName(n, name)) {
+      let s = seeds[i];
+      if (sameName(s.name, name)) {
         return true;
       };
       i += 1;
@@ -715,17 +759,24 @@ persistent actor Self {
   };
 
   public query ({ caller }) func seed_count() : async Nat {
+    ensureSeedsMigrated();
     switch (findOwnerIndex(caller)) {
-      case (?idx) { let (_, seeds) = seedsByOwner[idx]; seeds.size() };
+      case (?idx) { let (_, seeds) = seedsByOwnerV2[idx]; seeds.size() };
       case null { 0 };
     };
   };
 
-  public query ({ caller }) func get_seed_names() : async [Text] {
+  public query ({ caller }) func get_seed_names() : async [{ name : Text; has_image : Bool }] {
+    ensureSeedsMigrated();
     switch (findOwnerIndex(caller)) {
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
-        Array.map<(Text, Blob, Blob), Text>(seeds, func((n, _, _)) : Text { n });
+        let (_, seeds) = seedsByOwnerV2[idx];
+        Array.map<Seed, { name : Text; has_image : Bool }>(
+          seeds,
+          func(s : Seed) : { name : Text; has_image : Bool } {
+            { name = s.name; has_image = switch (s.image_cipher) { case (?_) true; case null false } };
+          },
+        );
       };
       case null { [] };
     };
@@ -774,7 +825,13 @@ persistent actor Self {
     };
   };
 
-  public shared ({ caller }) func add_seed(name : Text, cipher : Blob, iv : Blob) : async Result.Result<(), Text> {
+  public shared ({ caller }) func add_seed(
+    name : Text,
+    cipher : Blob,
+    iv : Blob,
+    image_cipher : ?Blob,
+    image_iv : ?Blob,
+  ) : async Result.Result<(), Text> {
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -786,17 +843,25 @@ persistent actor Self {
     if (cipherArr.size() > MAX_SEED_CIPHER_BYTES) {
       return #err("Seed phrase too long. Limit is 420 characters.");
     };
-    var j : Nat = 0;
-    label checkCipher while (j < cipherArr.size()) {
-      if (cipherArr[j] == 0) {
-        return #err("Ciphertext contains unsupported bytes");
+    switch (image_cipher, image_iv) {
+      case (?imgCipher, ?imgIv) {
+        let imgArr = Blob.toArray(imgCipher);
+        if (imgArr.size() == 0) {
+          return #err("Image ciphertext cannot be empty");
+        };
+        if (imgArr.size() > MAX_IMAGE_BYTES) {
+          return #err("Encrypted image is too large. Limit is 1 MB.");
+        };
+        if (Blob.toArray(imgIv).size() == 0) {
+          return #err("Image IV cannot be empty");
+        };
       };
-      j += 1;
+      case _ {};
     };
 
     switch (findOwnerIndex(caller)) {
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         if (seeds.size() >= MAX_SEEDS_PER_USER) {
           return #err("Maximum number of seeds reached. Delete one before adding another.");
         };
@@ -812,7 +877,13 @@ persistent actor Self {
       case (#ok(())) {};
     };
 
-    let { icp_e8s } = await estimate_cost("encrypt", 1);
+    var encryptOps : Nat = 1;
+    switch (image_cipher) {
+      case (?_) { encryptOps += 1 };
+      case null {};
+    };
+
+    let { icp_e8s } = await estimate_cost("encrypt", encryptOps);
     switch (assertCostWithinLimit(icp_e8s)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(())) {};
@@ -828,24 +899,32 @@ persistent actor Self {
     };
 
     try {
+      let newSeed : Seed = {
+        name = normalizedName;
+        seed_cipher = cipher;
+        seed_iv = iv;
+        image_cipher = image_cipher;
+        image_iv = image_iv;
+      };
+
       switch (findOwnerIndex(caller)) {
         case (?idx) {
-          let (_, seeds) = seedsByOwner[idx];
-          let updatedSeeds = Array.append<(Text, Blob, Blob)>(seeds, [(normalizedName, cipher, iv)]);
-          let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
-            seedsByOwner.size(),
-            func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
+          let (_, seeds) = seedsByOwnerV2[idx];
+          let updatedSeeds = Array.append<Seed>(seeds, [newSeed]);
+          let updatedOwners = Array.tabulate<(Principal, [Seed])>(
+            seedsByOwnerV2.size(),
+            func(j : Nat) : (Principal, [Seed]) {
               if (j == idx) {
                 (caller, updatedSeeds)
               } else {
-                seedsByOwner[j]
+                seedsByOwnerV2[j]
               }
             },
           );
-          seedsByOwner := updatedOwners;
+          seedsByOwnerV2 := updatedOwners;
         };
         case null {
-          seedsByOwner := Array.append<(Principal, [(Text, Blob, Blob)])>(seedsByOwner, [(caller, [(normalizedName, cipher, iv)])]);
+          seedsByOwnerV2 := Array.append<(Principal, [Seed])>(seedsByOwnerV2, [(caller, [newSeed])]);
         };
       };
 
@@ -874,26 +953,126 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (owner, seeds) = seedsByOwner[idx];
-        let filtered = Array.filter<(Text, Blob, Blob)>(seeds, func((n, _, _)) : Bool { not sameName(n, normalizedName) });
+        let (owner, seeds) = seedsByOwnerV2[idx];
+        let filtered = Array.filter<Seed>(seeds, func(s : Seed) : Bool { not sameName(s.name, normalizedName) });
         if (filtered.size() == seeds.size()) {
           return #err("Seed not found: " # normalizedName);
         };
 
-        let updatedOwners = Array.tabulate<(Principal, [(Text, Blob, Blob)])>(
-          seedsByOwner.size(),
-          func(j : Nat) : (Principal, [(Text, Blob, Blob)]) {
+        let updatedOwners = Array.tabulate<(Principal, [Seed])>(
+          seedsByOwnerV2.size(),
+          func(j : Nat) : (Principal, [Seed]) {
             if (j == idx) {
               (owner, filtered)
             } else {
-              seedsByOwner[j]
+              seedsByOwnerV2[j]
             }
           },
         );
-        seedsByOwner := updatedOwners;
+        seedsByOwnerV2 := updatedOwners;
         audit("Deleted seed " # normalizedName, caller);
         #ok(());
       };
+    };
+  };
+
+  public shared ({ caller }) func add_image(
+    name : Text,
+    image_cipher : Blob,
+    image_iv : Blob,
+  ) : async Result.Result<(), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
+
+    let imgArr = Blob.toArray(image_cipher);
+    if (imgArr.size() == 0) {
+      return #err("Image ciphertext cannot be empty");
+    };
+    if (imgArr.size() > MAX_IMAGE_BYTES) {
+      return #err("Encrypted image is too large. Limit is 1 MB.");
+    };
+    if (Blob.toArray(image_iv).size() == 0) {
+      return #err("Image IV cannot be empty");
+    };
+
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
+    let { icp_e8s } = await estimate_cost("encrypt", 1);
+    switch (assertCostWithinLimit(icp_e8s)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
+    var charged = false;
+    let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+
+    if (icp_e8s > 0) {
+      switch (await chargeUser(caller, icp_e8s)) {
+        case (#err(msg)) { return #err(msg) };
+        case (#ok(_)) { charged := true };
+      };
+    };
+
+    try {
+      switch (findOwnerIndex(caller)) {
+        case null { return #err("No seeds found for this user") };
+        case (?idx) {
+          let (owner, seeds) = seedsByOwnerV2[idx];
+          var updated = Array.tabulateVar<Seed>(seeds.size(), func(i : Nat) : Seed { seeds[i] });
+          var found = false;
+
+          var i : Nat = 0;
+          while (i < updated.size()) {
+            if (sameName(updated[i].name, normalizedName)) {
+              updated[i] := {
+                name = updated[i].name;
+                seed_cipher = updated[i].seed_cipher;
+                seed_iv = updated[i].seed_iv;
+                image_cipher = ?image_cipher;
+                image_iv = ?image_iv;
+              };
+              found := true;
+              i := updated.size();
+            } else {
+              i += 1;
+            };
+          };
+
+          if (not found) {
+            return #err("Seed not found: " # normalizedName);
+          };
+
+          let immutableUpdated = Array.freeze<Seed>(updated);
+
+          let updatedOwners = Array.tabulate<(Principal, [Seed])>(
+            seedsByOwnerV2.size(),
+            func(j : Nat) : (Principal, [Seed]) {
+              if (j == idx) {
+                (owner, immutableUpdated)
+              } else {
+                seedsByOwnerV2[j]
+              }
+            },
+          );
+          seedsByOwnerV2 := updatedOwners;
+        };
+      };
+
+      if (icp_e8s > 0) {
+        ignore await convertToCycles(amountToConvert);
+      };
+      audit("Added image to seed " # normalizedName, caller);
+      #ok(());
+    } catch (e) {
+      if (charged) {
+        await refundUser(caller, icp_e8s, "add image: " # Error.message(e));
+      };
+      #err("Failed to save image. Please try again.");
     };
   };
 
@@ -909,11 +1088,11 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         var found : ?(Blob, Blob) = null;
-        label search for ((n, c, ivVal) in Array.vals(seeds)) {
-          if (sameName(n, normalizedName)) {
-            found := ?(c, ivVal);
+        label search for (s in Array.vals(seeds)) {
+          if (sameName(s.name, normalizedName)) {
+            found := ?(s.seed_cipher, s.seed_iv);
             break search;
           };
         };
@@ -967,11 +1146,11 @@ persistent actor Self {
     switch (findOwnerIndex(caller)) {
       case null { #err("No seeds found for this user") };
       case (?idx) {
-        let (_, seeds) = seedsByOwner[idx];
+        let (_, seeds) = seedsByOwnerV2[idx];
         var found : ?(Blob, Blob) = null;
-        label search for ((n, c, ivVal) in Array.vals(seeds)) {
-          if (sameName(n, normalizedName)) {
-            found := ?(c, ivVal);
+        label search for (s in Array.vals(seeds)) {
+          if (sameName(s.name, normalizedName)) {
+            found := ?(s.seed_cipher, s.seed_iv);
             break search;
           };
         };
@@ -1017,6 +1196,135 @@ persistent actor Self {
                 await refundUser(caller, total, "decrypt and derive: " # Error.message(e));
               };
               #err("Failed to retrieve seed");
+            };
+          };
+        };
+      };
+    };
+  };
+
+  public shared ({ caller }) func get_image_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (_, seeds) = seedsByOwnerV2[idx];
+        var found : ?Seed = null;
+        label search for (s in Array.vals(seeds)) {
+          if (sameName(s.name, normalizedName)) {
+            found := ?s;
+            break search;
+          };
+        };
+
+        switch (found) {
+          case null { #err("Seed not found: " # normalizedName) };
+          case (?seed) {
+            switch (seed.image_cipher, seed.image_iv) {
+              case (?cipher, ?ivVal) {
+                let { icp_e8s } = await estimate_cost("decrypt", 1);
+                switch (assertCostWithinLimit(icp_e8s)) {
+                  case (#err(msg)) { return #err(msg) };
+                  case (#ok(())) {};
+                };
+
+                var charged = false;
+                if (icp_e8s > 0) {
+                  switch (await chargeUser(caller, icp_e8s)) {
+                    case (#err(msg)) { return #err(msg) };
+                    case (#ok(_)) { charged := true };
+                  };
+                };
+
+                if (icp_e8s > 0) {
+                  let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+                  ignore await convertToCycles(amountToConvert);
+                };
+
+                audit("Retrieved encrypted image for seed " # normalizedName, caller);
+                #ok((cipher, ivVal));
+              };
+              case _ { #err("No image found for this seed") };
+            };
+          };
+        };
+      };
+    };
+  };
+
+  public shared ({ caller }) func get_image_cipher_and_key(
+    name : Text,
+    transport_public_key : Blob,
+  ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (_, seeds) = seedsByOwnerV2[idx];
+        var found : ?Seed = null;
+        label search for (s in Array.vals(seeds)) {
+          if (sameName(s.name, normalizedName)) {
+            found := ?s;
+            break search;
+          };
+        };
+
+        switch (found) {
+          case null { #err("Seed not found: " # normalizedName) };
+          case (?seed) {
+            switch (seed.image_cipher, seed.image_iv) {
+              case (?cipher, ?ivVal) {
+                let decryptCost = await estimate_cost("decrypt", 1);
+                let deriveCost = await estimate_cost("derive", 1);
+                let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
+                switch (assertCostWithinLimit(total)) { case (#err(msg)) { return #err(msg) }; case (#ok(())) {} };
+
+                var charged = false;
+                if (total > 0) {
+                  switch (await chargeUser(caller, total)) {
+                    case (#err(msg)) { return #err(msg) };
+                    case (#ok(_)) { charged := true };
+                  };
+                };
+
+                try {
+                  let input : Blob = Text.encodeUtf8(normalizedName);
+                  let { encrypted_key } = await (with cycles = 26_153_846_153) IC.vetkd_derive_key({
+                    input;
+                    context = context(caller);
+                    key_id = keyId();
+                    transport_public_key;
+                  });
+
+                  if (total > 0) {
+                    let amountToConvert = if (total > ICP_TO_CYCLES_BUFFER_E8S) { total - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+                    ignore await convertToCycles(amountToConvert);
+                  };
+
+                  audit("Retrieved image cipher and vetKD key for seed " # normalizedName, caller);
+                  #ok((cipher, ivVal, encrypted_key));
+                } catch (e) {
+                  if (charged) {
+                    await refundUser(caller, total, "decrypt and derive image: " # Error.message(e));
+                  };
+                  #err("Failed to retrieve image");
+                };
+              };
+              case _ { #err("No image found for this seed") };
             };
           };
         };
