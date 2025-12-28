@@ -25,6 +25,27 @@
      err: text;
      ok;
    };
+  type Result_4 =
+   variant {
+     err: text;
+     ok: record {
+           blob;
+           blob;
+           opt blob;
+           opt blob;
+         };
+   };
+  type Result_5 =
+   variant {
+     err: text;
+     ok: record {
+           blob;
+           blob;
+           opt blob;
+           opt blob;
+           blob;
+         };
+   };
 service : {
   add_image: (name: text, image_cipher: blob, image_iv: blob) -> (Result_3);
   add_seed: (name: text, cipher: blob, iv: blob, image_cipher: opt blob, image_iv: opt blob) -> (Result_3);
@@ -47,6 +68,8 @@ service : {
     });
   get_image_cipher: (name: text) -> (Result_2);
   get_image_cipher_and_key: (name: text, transport_public_key: blob) -> (Result_1);
+  get_seed_and_image_ciphers: (name: text) -> (Result_4);
+  get_seed_and_image_ciphers_and_key: (name: text, transport_public_key: blob) -> (Result_5);
   get_seed_cipher: (name: text) -> (Result_2);
   get_seed_cipher_and_key: (name: text, transport_public_key: blob) -> (Result_1);
   get_seed_names: () -> (vec record { name: text; has_image: bool }) query;
