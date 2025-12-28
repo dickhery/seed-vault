@@ -283,13 +283,15 @@ persistent actor Self {
     let now = Time.now();
     let key = callerKey(caller);
 
-    if (now - globalResetNs >= RESET_INTERVAL) {
+    // Guard against clock skew or corrupted timestamps from previous upgrades by
+    // resetting counters when the stored reset time is in the future.
+    if (now < globalResetNs or now - globalResetNs >= RESET_INTERVAL) {
       globalOps := 0;
       globalResetNs := now;
     };
     if (globalOps >= GLOBAL_RATE_LIMIT) {
-      let retryNs = RESET_INTERVAL - (now - globalResetNs);
-      let retryMs = if (retryNs > 0) { retryNs / 1_000_000 } else { 0 };
+      let retryNs = Int.max(0, RESET_INTERVAL - (now - globalResetNs));
+      let retryMs = Int.min(retryNs, RESET_INTERVAL) / 1_000_000; // cap to the window length
       return #err(
         "Global rate limit reached. Please retry in ~" # Int.toText(retryMs) # " ms to protect other users.",
       );
@@ -298,13 +300,13 @@ persistent actor Self {
 
     switch (Trie.find(userOps, key, Principal.equal)) {
       case (? (count, lastReset)) {
-        if (now - lastReset >= RESET_INTERVAL) {
+        if (now < lastReset or now - lastReset >= RESET_INTERVAL) {
           let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (1, now));
           userOps := updatedTrie;
           #ok(())
         } else if (count >= RATE_LIMIT) {
-          let retryNs = RESET_INTERVAL - (now - lastReset);
-          let retryMs = if (retryNs > 0) { retryNs / 1_000_000 } else { 0 };
+          let retryNs = Int.max(0, RESET_INTERVAL - (now - lastReset));
+          let retryMs = Int.min(retryNs, RESET_INTERVAL) / 1_000_000;
           #err("Rate limit exceeded. Try again in ~" # Int.toText(retryMs) # " ms.")
         } else {
           let (updatedTrie, _) = Trie.put(userOps, key, Principal.equal, (count + 1, lastReset));
