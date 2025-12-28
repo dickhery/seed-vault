@@ -742,11 +742,17 @@ function App() {
         backendActor.estimate_cost('derive', 1),
       ]);
       const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-      const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+      const totalOpsCost = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s);
+      const requiresPayment = totalOpsCost > 0;
+      const required = requiresPayment ? totalOpsCost + LEDGER_FEE_E8S : 0;
       const extraNote = includesImage && decryptEstimate.icp_e8s > 0 ? ' (includes image decrypt cost)' : '';
       const confirmed = window.confirm(
-        `Decrypting "${normalizedName}"${includesImage ? ' and its image' : ''} will cost ~${formatIcp(required)} ICP${extraNote} (ledger fee and buffer included).${
-          fallback ? ' (Using fallback exchange rate estimate.)' : ''
+        `Decrypting "${normalizedName}"${includesImage ? ' and its image' : ''}${
+          requiresPayment
+            ? ` will cost ~${formatIcp(required)} ICP${extraNote} (ledger fee and buffer included).${
+                fallback ? ' (Using fallback exchange rate estimate.)' : ''
+              }`
+            : ' should not incur a fee.'
         } Continue?\n\nWarning: Decrypt only on trusted devices. Data will auto-hide and clear after 5 minutes.`,
       );
       if (!confirmed) {
@@ -765,11 +771,13 @@ function App() {
       }
 
       setLoading(true);
-      setStatus(`Attempting payment for decryption of "${normalizedName}"${includesImage ? ' and image' : ''}...`);
-      await waitForBalance(
-        required,
-        `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
-      );
+      if (requiresPayment) {
+        setStatus(`Attempting payment for decryption of "${normalizedName}"${includesImage ? ' and image' : ''}...`);
+        await waitForBalance(
+          required,
+          `Please transfer at least ${formatIcp(required)} ICP for decryption and key derivation.`,
+        );
+      }
       setStatus(`Decrypting "${seedName}"${includesImage ? ' and image' : ''}...`);
       const transportSecretKey = TransportSecretKey.random();
       const result = await backendActor.get_seed_and_image_ciphers_and_key(
