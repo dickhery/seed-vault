@@ -827,18 +827,28 @@ function App() {
       const seedIvBase64 = btoa(String.fromCharCode(...new Uint8Array(seedIv)));
 
       let imageSnapshot = null;
-      if (imageCipherOpt && imageIvOpt) {
-        const plaintext = await decryptBytes(
-          new Uint8Array(imageCipherOpt),
-          primary,
-          new Uint8Array(imageIvOpt),
-        );
+      // imageCipherOpt and imageIvOpt are optionals; unwrap safely and only decrypt if both exist and have data
+      const imageCipherBytes =
+        Array.isArray(imageCipherOpt) && imageCipherOpt.length > 0
+          ? new Uint8Array(imageCipherOpt[0])
+          : imageCipherOpt instanceof Uint8Array
+            ? imageCipherOpt
+            : null;
+      const imageIvBytes =
+        Array.isArray(imageIvOpt) && imageIvOpt.length > 0
+          ? new Uint8Array(imageIvOpt[0])
+          : imageIvOpt instanceof Uint8Array
+            ? imageIvOpt
+            : null;
+
+      if (imageCipherBytes && imageCipherBytes.length > 0 && imageIvBytes && imageIvBytes.length > 0) {
+        const plaintext = await decryptBytes(imageCipherBytes, primary, imageIvBytes);
         const blob = new Blob([plaintext], { type: 'image/png' });
         const url = URL.createObjectURL(blob);
         setDecryptedImages((prev) => ({ ...prev, [normalizedName]: url }));
 
-        const imageCipherBase64 = btoa(String.fromCharCode(...new Uint8Array(imageCipherOpt)));
-        const imageIvBase64 = btoa(String.fromCharCode(...new Uint8Array(imageIvOpt)));
+        const imageCipherBase64 = btoa(String.fromCharCode(...imageCipherBytes));
+        const imageIvBase64 = btoa(String.fromCharCode(...imageIvBytes));
         imageSnapshot = { cipher: imageCipherBase64, iv: imageIvBase64 };
       }
 
@@ -1448,12 +1458,54 @@ function App() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={async () => {
+                                  const togglingOn = !showEncrypted[seedName];
+                                  if (togglingOn && !encryptedSnapshots[seedName]) {
+                                    try {
+                                      const seedResult = await backendActor.get_seed_cipher(seedName);
+                                      if ('err' in seedResult) throw new Error(seedResult.err);
+                                      const [seedCipher, seedIv] = seedResult.ok;
+                                      const seedCipherBase64 = btoa(
+                                        String.fromCharCode(...new Uint8Array(seedCipher)),
+                                      );
+                                      const seedIvBase64 = btoa(
+                                        String.fromCharCode(...new Uint8Array(seedIv)),
+                                      );
+
+                                      let imageSnapshot = null;
+                                      if (hasImages[seedName]) {
+                                        const imageResult = await backendActor.get_image_cipher(seedName);
+                                        if ('err' in imageResult) throw new Error(imageResult.err);
+                                        const [imageCipher, imageIv] = imageResult.ok;
+                                        if (imageCipher?.length > 0 && imageIv?.length > 0) {
+                                          const imageCipherBase64 = btoa(
+                                            String.fromCharCode(...new Uint8Array(imageCipher)),
+                                          );
+                                          const imageIvBase64 = btoa(
+                                            String.fromCharCode(...new Uint8Array(imageIv)),
+                                          );
+                                          imageSnapshot = { cipher: imageCipherBase64, iv: imageIvBase64 };
+                                        }
+                                      }
+
+                                      setEncryptedSnapshots((prev) => ({
+                                        ...prev,
+                                        [seedName]: {
+                                          seed: { cipher: seedCipherBase64, iv: seedIvBase64 },
+                                          image: imageSnapshot,
+                                        },
+                                      }));
+                                    } catch (error) {
+                                      setStatus('Failed to fetch encrypted data.');
+                                      return;
+                                    }
+                                  }
+
                                   setShowEncrypted((prev) => ({
                                     ...prev,
                                     [seedName]: !prev[seedName],
-                                  }))
-                                }
+                                  }));
+                                }}
                               >
                                 {showEncrypted[seedName] ? 'Show decrypted' : 'Show encrypted'}
                               </button>
