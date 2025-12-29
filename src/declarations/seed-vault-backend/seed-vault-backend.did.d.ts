@@ -24,6 +24,11 @@ export type Result_4 = {
   { 'err' : string };
 export type Result_3 = { 'ok' : null } |
   { 'err' : string };
+export type CostEstimate = {
+  'cycles' : bigint;
+  'fallback_used' : boolean;
+  'icp_e8s' : bigint;
+};
 export interface _SERVICE {
   'add_image' : ActorMethod<
     [string, Uint8Array | number[], Uint8Array | number[]],
@@ -48,7 +53,11 @@ export interface _SERVICE {
   >,
   'estimate_cost' : ActorMethod<
     [string, bigint],
-    { 'icp_e8s' : bigint, 'fallback_used' : boolean, 'cycles' : bigint }
+    CostEstimate
+  >,
+  'estimate_cost_v2' : ActorMethod<
+    [{ 'count' : bigint, 'operation' : string }],
+    CostEstimate
   >,
   'get_account_details' : ActorMethod<
     [],

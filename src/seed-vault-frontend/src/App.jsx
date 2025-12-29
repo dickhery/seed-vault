@@ -198,6 +198,17 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const seedClearTimeouts = useRef({});
 
+  async function estimateCost(operation, count) {
+    if (!backendActor) {
+      throw new Error('Backend is not initialized yet. Please re-authenticate.');
+    }
+    const payloadCount = BigInt(count);
+    if (backendActor.estimate_cost_v2) {
+      return backendActor.estimate_cost_v2({ operation, count: payloadCount });
+    }
+    return backendActor.estimate_cost(operation, payloadCount);
+  }
+
   const decryptingAny = useMemo(
     () => Object.values(decryptingSeeds).some(Boolean),
     [decryptingSeeds],
@@ -466,11 +477,11 @@ function App() {
       }
 
       try {
-        const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
-          backendActor.estimate_cost('encrypt', 1),
-          backendActor.estimate_cost('decrypt', 1),
-          backendActor.estimate_cost('derive', 1),
-        ]);
+      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
+        estimateCost('encrypt', 1),
+        estimateCost('decrypt', 1),
+        estimateCost('derive', 1),
+      ]);
         const fallback =
           encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
         const costE8s = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
@@ -504,7 +515,7 @@ function App() {
           );
         }
       } catch (error) {
-        console.error('estimate_cost failed', error);
+      console.error('estimate_cost failed', error);
         hadError = true;
       }
 
@@ -755,8 +766,8 @@ function App() {
       const hasImage = hasImages[normalizedName];
       const decryptOps = hasImage ? 2 : 1;
       const [decryptEstimate, deriveEstimate] = await Promise.all([
-        backendActor.estimate_cost('decrypt', decryptOps),
-        backendActor.estimate_cost('derive', 1),
+        estimateCost('decrypt', decryptOps),
+        estimateCost('derive', 1),
       ]);
       const fallback = decryptEstimate.fallback_used || deriveEstimate.fallback_used;
       const required = Number(decryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
@@ -869,8 +880,8 @@ function App() {
     const normalizedName = nameValidation.value;
 
     const [encryptEstimate, deriveEstimate] = await Promise.all([
-      backendActor.estimate_cost('encrypt', 1),
-      backendActor.estimate_cost('derive', 1),
+      estimateCost('encrypt', 1),
+      estimateCost('derive', 1),
     ]);
     const fallback = encryptEstimate.fallback_used || deriveEstimate.fallback_used;
     const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
@@ -1000,10 +1011,10 @@ function App() {
         return;
       }
 
-      const [encryptEstimate, deriveEstimate] = await Promise.all([
-        backendActor.estimate_cost('encrypt', 1),
-        backendActor.estimate_cost('derive', 1),
-      ]);
+    const [encryptEstimate, deriveEstimate] = await Promise.all([
+      estimateCost('encrypt', 1),
+      estimateCost('derive', 1),
+    ]);
       const fallback = encryptEstimate.fallback_used || deriveEstimate.fallback_used;
       const required = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
       const confirmed = window.confirm(

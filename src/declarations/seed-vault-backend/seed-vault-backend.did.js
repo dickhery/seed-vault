@@ -18,6 +18,11 @@ export const idlFactory = ({ IDL }) => {
     'ok' : IDL.Tuple(IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)),
     'err' : IDL.Text,
   });
+  const CostEstimate = IDL.Record({
+    'cycles' : IDL.Nat,
+    'fallback_used' : IDL.Bool,
+    'icp_e8s' : IDL.Nat,
+  });
   const Result = IDL.Variant({ 'ok' : IDL.Nat, 'err' : IDL.Text });
   return IDL.Service({
     'add_image' : IDL.Func(
@@ -46,13 +51,12 @@ export const idlFactory = ({ IDL }) => {
       ),
     'estimate_cost' : IDL.Func(
         [IDL.Text, IDL.Nat],
-        [
-          IDL.Record({
-            'icp_e8s' : IDL.Nat,
-            'fallback_used' : IDL.Bool,
-            'cycles' : IDL.Nat,
-          }),
-        ],
+        [CostEstimate],
+        [],
+      ),
+    'estimate_cost_v2' : IDL.Func(
+        [IDL.Record({ 'count' : IDL.Nat, 'operation' : IDL.Text })],
+        [CostEstimate],
         [],
       ),
     'get_account_details' : IDL.Func(

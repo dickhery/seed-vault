@@ -52,6 +52,12 @@ service : {
       fallback_used: bool;
       icp_e8s: nat;
     });
+  estimate_cost_v2: (record { count: nat; operation: text }) ->
+   (record {
+      cycles: nat;
+      fallback_used: bool;
+      icp_e8s: nat;
+    });
   get_account_details: () ->
    (record {
       balance: nat;

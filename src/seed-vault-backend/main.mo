@@ -737,13 +737,13 @@ persistent actor Self {
     };
   };
 
-  public shared ({ caller }) func estimate_cost(operation : Text, count : Nat) : async {
+  private func estimateCostInternal(operation : Text, count : Nat, caller : Principal) : async {
     cycles : Nat;
     icp_e8s : Nat;
     fallback_used : Bool;
   } {
     switch (checkRateLimit(caller)) {
-      case (#err(msg)) { return { cycles = 0; icp_e8s = 0; fallback_used = true } };
+      case (#err(_)) { return { cycles = 0; icp_e8s = 0; fallback_used = true } };
       case (#ok(())) {};
     };
 
@@ -756,6 +756,26 @@ persistent actor Self {
       fallback := true;
     };
     { cycles; icp_e8s = capped; fallback_used = fallback };
+  };
+
+  public shared ({ caller }) func estimate_cost(operation : Text, count : Nat) : async {
+    cycles : Nat;
+    icp_e8s : Nat;
+    fallback_used : Bool;
+  } {
+    await estimateCostInternal(operation, count, caller);
+  };
+
+  // Backward-compatible estimator that accepts a record so argument ordering mismatches
+  // in older generated bindings cannot trigger a decode trap. The frontend uses this
+  // endpoint to avoid the "unexpected IDL type when parsing Text" rejection seen in
+  // the legacy tuple signature.
+  public shared ({ caller }) func estimate_cost_v2(args : { operation : Text; count : Nat }) : async {
+    cycles : Nat;
+    icp_e8s : Nat;
+    fallback_used : Bool;
+  } {
+    await estimateCostInternal(args.operation, args.count, caller);
   };
 
   public query ({ caller }) func seed_count() : async Nat {
