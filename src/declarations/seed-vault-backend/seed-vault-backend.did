@@ -1,37 +1,39 @@
-  type Result =
-   variant {
-     err: text;
-     ok: nat;
-   };
-  type Result_1 =
-   variant {
-     err: text;
-     ok: record {
-           blob;
-           blob;
-           blob;
-         };
-   };
-  type Result_2 =
-   variant {
-     err: text;
-     ok: record {
-           blob;
-           blob;
-         };
-   };
-  type Result_3 =
-   variant {
-     err: text;
-     ok;
-   };
+type Result_3 = 
+ variant {
+   err: text;
+   ok;
+ };
+type Result_2 = 
+ variant {
+   err: text;
+   ok: record {
+         blob;
+         blob;
+       };
+ };
+type Result_1 = 
+ variant {
+   err: text;
+   ok: record {
+         blob;
+         blob;
+         blob;
+       };
+ };
+type Result = 
+ variant {
+   err: text;
+   ok: nat;
+ };
 service : {
   add_image: (name: text, image_cipher: blob, image_iv: blob) -> (Result_3);
-  add_seed: (name: text, cipher: blob, iv: blob, image_cipher: opt blob, image_iv: opt blob) -> (Result_3);
+  add_seed: (name: text, cipher: blob, iv: blob, image_cipher: opt blob,
+   image_iv: opt blob) -> (Result_3);
   canister_cycles: () -> (nat) query;
   convert_collected_icp: () -> (Result_3);
   delete_seed: (name: text) -> (Result_3);
-  encrypted_symmetric_key_for_seed: (name: text, transport_public_key: blob) -> (blob);
+  encrypted_symmetric_key_for_seed: (name: text, transport_public_key:
+   blob) -> (blob);
   estimate_cost: (operation: text, count: nat) ->
    (record {
       cycles: nat;
@@ -45,11 +47,20 @@ service : {
       owner: text;
       subaccount: blob;
     });
+  get_audit_log: () -> (vec record {
+                              int;
+                              text;
+                            }) query;
   get_image_cipher: (name: text) -> (Result_2);
-  get_image_cipher_and_key: (name: text, transport_public_key: blob) -> (Result_1);
+  get_image_cipher_and_key: (name: text, transport_public_key: blob) ->
+   (Result_1);
   get_seed_cipher: (name: text) -> (Result_2);
-  get_seed_cipher_and_key: (name: text, transport_public_key: blob) -> (Result_1);
-  get_seed_names: () -> (vec record { name: text; has_image: bool }) query;
+  get_seed_cipher_and_key: (name: text, transport_public_key: blob) ->
+   (Result_1);
+  get_seed_names: () -> (vec record {
+                               has_image: bool;
+                               name: text;
+                             }) query;
   pricing_status: () ->
    (record {
       fallback_used: bool;

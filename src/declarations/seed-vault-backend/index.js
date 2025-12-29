@@ -1,27 +1,42 @@
-import { HttpAgent, Actor } from '@dfinity/agent';
+import { Actor, HttpAgent } from "@dfinity/agent";
 
-const canisterId = process.env.CANISTER_ID_SEED_VAULT_BACKEND || '';
+// Imports and re-exports candid interface
+import { idlFactory } from "./seed-vault-backend.did.js";
+export { idlFactory } from "./seed-vault-backend.did.js";
 
-const idlFactory = () => {
-  throw new Error('Run `dfx generate seed-vault-backend` to obtain candid definitions.');
+/* CANISTER_ID is replaced by webpack based on node environment
+ * Note: canister environment variable will be standardized as
+ * process.env.CANISTER_ID_<CANISTER_NAME_UPPERCASE>
+ * beginning in dfx 0.15.0
+ */
+export const canisterId =
+  process.env.CANISTER_ID_SEED_VAULT_BACKEND;
+
+export const createActor = (canisterId, options = {}) => {
+  const agent = options.agent || new HttpAgent({ ...options.agentOptions });
+
+  if (options.agent && options.agentOptions) {
+    console.warn(
+      "Detected both agent and agentOptions passed to createActor. Ignoring agentOptions and proceeding with the provided agent."
+    );
+  }
+
+  // Fetch root key for certificate validation during development
+  if (process.env.DFX_NETWORK !== "ic") {
+    agent.fetchRootKey().catch((err) => {
+      console.warn(
+        "Unable to fetch root key. Check to ensure that your local replica is running"
+      );
+      console.error(err);
+    });
+  }
+
+  // Creates an actor with using the candid interface and the HttpAgent
+  return Actor.createActor(idlFactory, {
+    agent,
+    canisterId,
+    ...options.actorOptions,
+  });
 };
 
-export function createActor(id = canisterId, options = {}) {
-  if (!id) {
-    throw new Error('Missing canister ID for seed-vault-backend.');
-  }
-  const agent = options.agentOptions
-    ? new HttpAgent(options.agentOptions)
-    : new HttpAgent({ host: options.host });
-  return Actor.createActor(idlFactory, { agent, canisterId: id });
-}
-
-export const seed_vault_backend = new Proxy(
-  {},
-  {
-    get() {
-      throw new Error('seed-vault-backend declarations are unavailable; regenerate with dfx.');
-    },
-  },
-);
-export { canisterId };
+export const seed_vault_backend = canisterId ? createActor(canisterId) : undefined;

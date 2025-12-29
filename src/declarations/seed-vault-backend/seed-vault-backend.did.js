@@ -10,16 +10,19 @@ export const idlFactory = ({ IDL }) => {
   });
   const Result = IDL.Variant({ 'ok' : IDL.Nat, 'err' : IDL.Text });
   return IDL.Service({
-    'add_image' : IDL.Func([
-        IDL.Text,
-        IDL.Vec(IDL.Nat8),
-        IDL.Vec(IDL.Nat8),
-      ],
-      [Result_3],
-      [],
-    ),
+    'add_image' : IDL.Func(
+        [IDL.Text, IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
+        [Result_3],
+        [],
+      ),
     'add_seed' : IDL.Func(
-        [IDL.Text, IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Opt(IDL.Vec(IDL.Nat8)), IDL.Opt(IDL.Vec(IDL.Nat8))],
+        [
+          IDL.Text,
+          IDL.Vec(IDL.Nat8),
+          IDL.Vec(IDL.Nat8),
+          IDL.Opt(IDL.Vec(IDL.Nat8)),
+          IDL.Opt(IDL.Vec(IDL.Nat8)),
+        ],
         [Result_3],
         [],
       ),
@@ -54,6 +57,11 @@ export const idlFactory = ({ IDL }) => {
         ],
         [],
       ),
+    'get_audit_log' : IDL.Func(
+        [],
+        [IDL.Vec(IDL.Tuple(IDL.Int, IDL.Text))],
+        ['query'],
+      ),
     'get_image_cipher' : IDL.Func([IDL.Text], [Result_2], []),
     'get_image_cipher_and_key' : IDL.Func(
         [IDL.Text, IDL.Vec(IDL.Nat8)],
@@ -68,7 +76,7 @@ export const idlFactory = ({ IDL }) => {
       ),
     'get_seed_names' : IDL.Func(
         [],
-        [IDL.Vec(IDL.Record({ name: IDL.Text, has_image: IDL.Bool }))],
+        [IDL.Vec(IDL.Record({ 'name' : IDL.Text, 'has_image' : IDL.Bool }))],
         ['query'],
       ),
     'pricing_status' : IDL.Func(
