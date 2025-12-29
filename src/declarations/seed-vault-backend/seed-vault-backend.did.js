@@ -1,5 +1,15 @@
 export const idlFactory = ({ IDL }) => {
   const Result_3 = IDL.Variant({ 'ok' : IDL.Null, 'err' : IDL.Text });
+  const Result_4 = IDL.Variant({
+    'ok' : IDL.Tuple(
+      IDL.Vec(IDL.Nat8),
+      IDL.Vec(IDL.Nat8),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Vec(IDL.Nat8),
+    ),
+    'err' : IDL.Text,
+  });
   const Result_2 = IDL.Variant({
     'ok' : IDL.Tuple(IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)),
     'err' : IDL.Text,
@@ -55,6 +65,11 @@ export const idlFactory = ({ IDL }) => {
             'canister' : IDL.Text,
           }),
         ],
+        [],
+      ),
+    'get_ciphers_and_key' : IDL.Func(
+        [IDL.Text, IDL.Vec(IDL.Nat8)],
+        [Result_4],
         [],
       ),
     'get_audit_log' : IDL.Func(

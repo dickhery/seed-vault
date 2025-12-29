@@ -12,6 +12,16 @@ export type Result_2 = {
     'ok' : [Uint8Array | number[], Uint8Array | number[]]
   } |
   { 'err' : string };
+export type Result_4 = {
+    'ok' : [
+        Uint8Array | number[],
+        Uint8Array | number[],
+        [] | [Uint8Array | number[]],
+        [] | [Uint8Array | number[]],
+        Uint8Array | number[],
+      ]
+  } |
+  { 'err' : string };
 export type Result_3 = { 'ok' : null } |
   { 'err' : string };
 export interface _SERVICE {
@@ -48,6 +58,10 @@ export interface _SERVICE {
       'subaccount' : Uint8Array | number[],
       'canister' : string,
     }
+  >,
+  'get_ciphers_and_key' : ActorMethod<
+    [string, Uint8Array | number[]],
+    Result_4
   >,
   'get_audit_log' : ActorMethod<[], Array<[bigint, string]>>,
   'get_image_cipher' : ActorMethod<[string], Result_2>,

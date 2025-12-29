@@ -11,7 +11,7 @@ type Result_2 =
          blob;
        };
  };
-type Result_1 = 
+type Result_1 =
  variant {
    err: text;
    ok: record {
@@ -20,12 +20,24 @@ type Result_1 =
          blob;
        };
  };
-type Result = 
+type Result_4 =
+ variant {
+   err: text;
+   ok: record {
+         blob;
+         blob;
+         opt blob;
+         opt blob;
+         blob;
+       };
+ };
+type Result =
  variant {
    err: text;
    ok: nat;
  };
 service : {
+  get_ciphers_and_key: (name: text, transport_public_key: blob) -> (Result_4);
   add_image: (name: text, image_cipher: blob, image_iv: blob) -> (Result_3);
   add_seed: (name: text, cipher: blob, iv: blob, image_cipher: opt blob,
    image_iv: opt blob) -> (Result_3);
