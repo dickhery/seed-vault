@@ -1,5 +1,15 @@
 export const idlFactory = ({ IDL }) => {
   const Result_3 = IDL.Variant({ 'ok' : IDL.Null, 'err' : IDL.Text });
+  const Result_4 = IDL.Variant({
+    'ok' : IDL.Tuple(
+      IDL.Vec(IDL.Nat8),
+      IDL.Vec(IDL.Nat8),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Opt(IDL.Vec(IDL.Nat8)),
+      IDL.Vec(IDL.Nat8),
+    ),
+    'err' : IDL.Text,
+  });
   const Result_2 = IDL.Variant({
     'ok' : IDL.Tuple(IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)),
     'err' : IDL.Text,
@@ -7,6 +17,11 @@ export const idlFactory = ({ IDL }) => {
   const Result_1 = IDL.Variant({
     'ok' : IDL.Tuple(IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)),
     'err' : IDL.Text,
+  });
+  const CostEstimate = IDL.Record({
+    'cycles' : IDL.Nat,
+    'fallback_used' : IDL.Bool,
+    'icp_e8s' : IDL.Nat,
   });
   const Result = IDL.Variant({ 'ok' : IDL.Nat, 'err' : IDL.Text });
   return IDL.Service({
@@ -36,13 +51,12 @@ export const idlFactory = ({ IDL }) => {
       ),
     'estimate_cost' : IDL.Func(
         [IDL.Text, IDL.Nat],
-        [
-          IDL.Record({
-            'icp_e8s' : IDL.Nat,
-            'fallback_used' : IDL.Bool,
-            'cycles' : IDL.Nat,
-          }),
-        ],
+        [CostEstimate],
+        [],
+      ),
+    'estimate_cost_v2' : IDL.Func(
+        [IDL.Record({ 'count' : IDL.Nat, 'operation' : IDL.Text })],
+        [CostEstimate],
         [],
       ),
     'get_account_details' : IDL.Func(
@@ -55,6 +69,11 @@ export const idlFactory = ({ IDL }) => {
             'canister' : IDL.Text,
           }),
         ],
+        [],
+      ),
+    'get_ciphers_and_key' : IDL.Func(
+        [IDL.Text, IDL.Vec(IDL.Nat8)],
+        [Result_4],
         [],
       ),
     'get_audit_log' : IDL.Func(

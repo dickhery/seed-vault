@@ -737,13 +737,13 @@ persistent actor Self {
     };
   };
 
-  public shared ({ caller }) func estimate_cost(operation : Text, count : Nat) : async {
+  private func estimateCostInternal(operation : Text, count : Nat, caller : Principal) : async {
     cycles : Nat;
     icp_e8s : Nat;
     fallback_used : Bool;
   } {
     switch (checkRateLimit(caller)) {
-      case (#err(msg)) { return { cycles = 0; icp_e8s = 0; fallback_used = true } };
+      case (#err(_)) { return { cycles = 0; icp_e8s = 0; fallback_used = true } };
       case (#ok(())) {};
     };
 
@@ -756,6 +756,26 @@ persistent actor Self {
       fallback := true;
     };
     { cycles; icp_e8s = capped; fallback_used = fallback };
+  };
+
+  public shared ({ caller }) func estimate_cost(operation : Text, count : Nat) : async {
+    cycles : Nat;
+    icp_e8s : Nat;
+    fallback_used : Bool;
+  } {
+    await estimateCostInternal(operation, count, caller);
+  };
+
+  // Backward-compatible estimator that accepts a record so argument ordering mismatches
+  // in older generated bindings cannot trigger a decode trap. The frontend uses this
+  // endpoint to avoid the "unexpected IDL type when parsing Text" rejection seen in
+  // the legacy tuple signature.
+  public shared ({ caller }) func estimate_cost_v2(args : { operation : Text; count : Nat }) : async {
+    cycles : Nat;
+    icp_e8s : Nat;
+    fallback_used : Bool;
+  } {
+    await estimateCostInternal(args.operation, args.count, caller);
   };
 
   public query ({ caller }) func seed_count() : async Nat {
@@ -1325,6 +1345,87 @@ persistent actor Self {
                 };
               };
               case _ { #err("No image found for this seed") };
+            };
+          };
+        };
+      };
+    };
+  };
+
+  // Retrieve the seed cipher, optional image cipher, and vetKD-derived key together so the
+  // frontend can decrypt all attachments in a single paid call.
+  public shared ({ caller }) func get_ciphers_and_key(
+    name : Text,
+    transport_public_key : Blob,
+  ) : async Result.Result<(Blob, Blob, ?Blob, ?Blob, Blob), Text> {
+    let normalizedName = switch (validateRequestedName(name)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(n)) { n };
+    };
+
+    switch (checkRateLimit(caller)) {
+      case (#err(msg)) { return #err(msg) };
+      case (#ok(())) {};
+    };
+
+    switch (findOwnerIndex(caller)) {
+      case null { #err("No seeds found for this user") };
+      case (?idx) {
+        let (_, seeds) = seedsByOwnerV2[idx];
+        var found : ?Seed = null;
+        label search for (s in Array.vals(seeds)) {
+          if (sameName(s.name, normalizedName)) {
+            found := ?s;
+            break search;
+          };
+        };
+
+        switch (found) {
+          case null { #err("Seed not found: " # normalizedName) };
+          case (?seed) {
+            var decryptOps : Nat = 1;
+            switch (seed.image_cipher) {
+              case (?_) { decryptOps += 1 };
+              case null {};
+            };
+
+            let decryptCost = await estimate_cost("decrypt", decryptOps);
+            let deriveCost = await estimate_cost("derive", 1);
+            let total = decryptCost.icp_e8s + deriveCost.icp_e8s;
+            switch (assertCostWithinLimit(total)) {
+              case (#err(msg)) { return #err(msg) };
+              case (#ok(())) {};
+            };
+
+            var charged = false;
+            if (total > 0) {
+              switch (await chargeUser(caller, total)) {
+                case (#err(msg)) { return #err(msg) };
+                case (#ok(_)) { charged := true };
+              };
+            };
+
+            try {
+              let input : Blob = Text.encodeUtf8(normalizedName);
+              let { encrypted_key } = await (with cycles = DERIVE_CYCLE_COST) IC.vetkd_derive_key({
+                input;
+                context = context(caller);
+                key_id = keyId();
+                transport_public_key;
+              });
+
+              if (total > 0) {
+                let amountToConvert = if (total > ICP_TO_CYCLES_BUFFER_E8S) { total - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
+                ignore await convertToCycles(amountToConvert);
+              };
+
+              audit("Retrieved ciphers and vetKD key for seed " # normalizedName, caller);
+              #ok((seed.seed_cipher, seed.seed_iv, seed.image_cipher, seed.image_iv, encrypted_key));
+            } catch (e) {
+              if (charged) {
+                await refundUser(caller, total, "decrypt seed and attachments: " # Error.message(e));
+              };
+              #err("Failed to retrieve data");
             };
           };
         };
