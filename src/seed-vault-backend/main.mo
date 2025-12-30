@@ -119,10 +119,10 @@ persistent actor Self {
   let PRICING_REFRESH_INTERVAL_NS : Int = 300_000_000_000; // 5 minutes
   let FALLBACK_RETRY_INTERVAL_NS : Int = 60_000_000_000; // 1 minute between fallback retries
   // The XRC requires at least 1B cycles to be attached to each request. Send a
-  // larger 12B allowance so we avoid intermittent `NotEnoughCycles` rejections
-  // on busier subnets and during cache misses, which otherwise force the UI to
-  // fall back to stale pricing and show zero/near-zero costs.
-  let XRC_CALL_CYCLES : Nat = 12_000_000_000;
+  // larger allowance so we avoid intermittent `NotEnoughCycles` rejections on
+  // busier subnets and during cache misses, which otherwise force the UI to fall
+  // back to stale pricing and show zero/near-zero costs.
+  let XRC_CALL_CYCLES : Nat = 50_000_000_000;
   // Match the cycles attached in vetkd_derive_key so pricing reflects the
   // actual derivation cost instead of an inflated estimate.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
@@ -164,9 +164,9 @@ persistent actor Self {
   // Loosen rate limits and shorten the reset window to reduce spurious rejections
   // during heavier usage (for example, when users add images and decrypt multiple
   // seeds in quick succession).
-  let RATE_LIMIT : Nat = 100; // operations per reset interval
-  let GLOBAL_RATE_LIMIT : Nat = 1_000; // overall operations per reset interval
-  let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
+  let RATE_LIMIT : Nat = 400; // operations per reset interval (300% increase)
+  let GLOBAL_RATE_LIMIT : Nat = 4_000; // overall operations per reset interval (300% increase)
+  let RESET_INTERVAL : Int = 300_000_000_000; // 5 minutes in nanoseconds
 
   // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
   private func ensureSeedsMigrated() {
@@ -395,9 +395,27 @@ persistent actor Self {
     };
 
     let MIN_XRC_CYCLES : Nat = 1_000_000_000;
+    if (balance < MIN_XRC_CYCLES) {
+      let selfPrincipal = Principal.fromActor(Self);
+      let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
+      let icpBalance = try {
+        await ledger().icrc1_balance_of(defaultAccount)
+      } catch (_) { 0 };
+
+      if (icpBalance > ICP_TO_CYCLES_BUFFER_E8S) {
+        let convertible = icpBalance - ICP_TO_CYCLES_BUFFER_E8S;
+        switch (await convertToCycles(convertible)) {
+          case (#ok(())) {
+            balance := ExperimentalCycles.balance();
+          };
+          case (#err(_)) {};
+        };
+      };
+    };
+
     var attempts : Nat = 0;
     var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
-    label retries while (attempts < 3) {
+    label retries while (attempts < 5) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
         fallbackUsed := true;
@@ -416,7 +434,7 @@ persistent actor Self {
         };
         case (#Err(_)) {
           attempts += 1;
-          if (attempts >= 3) {
+          if (attempts >= 5) {
             rateResult := attempt;
             fallbackUsed := true;
           };
@@ -548,7 +566,7 @@ persistent actor Self {
             return #err("Cycles ledger unavailable: " # Error.message(e))
           };
 
-          if (mintedBalance <= CYCLES_WITHDRAW_FEE) {
+          if (mintedBalance < CYCLES_WITHDRAW_FEE + 100_000_000) {
             return #err("CMC notify succeeded but minted balance (" # Nat.toText(mintedBalance) # ") is not enough to withdraw")
           };
 
