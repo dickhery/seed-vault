@@ -1137,32 +1137,8 @@ persistent actor Self {
         switch (found) {
           case null { #err("Seed not found: " # normalizedName) };
           case (?pair) {
-            let { icp_e8s } = await estimate_cost("decrypt", 1);
-            switch (assertCostWithinLimit(icp_e8s)) {
-              case (#err(msg)) { return #err(msg) };
-              case (#ok(())) {};
-            };
-            var charged = false;
-            if (icp_e8s > 0) {
-              switch (await chargeUser(caller, icp_e8s)) {
-                case (#err(msg)) { return #err(msg) };
-                case (#ok(_)) { charged := true };
-              };
-            };
-
-            try {
-              if (icp_e8s > 0) {
-                let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-                ignore await convertToCycles(amountToConvert);
-              };
-              audit("Retrieved cipher only for seed " # normalizedName, caller);
-              #ok(pair);
-            } catch (e) {
-              if (charged) {
-                await refundUser(caller, icp_e8s, "decrypt seed: " # Error.message(e));
-              };
-              #err("Failed to retrieve seed");
-            };
+            audit("Retrieved cipher only for seed " # normalizedName, caller);
+            #ok(pair);
           };
         };
       };
@@ -1267,25 +1243,6 @@ persistent actor Self {
           case (?seed) {
             switch (seed.image_cipher, seed.image_iv) {
               case (?cipher, ?ivVal) {
-                let { icp_e8s } = await estimate_cost("decrypt", 1);
-                switch (assertCostWithinLimit(icp_e8s)) {
-                  case (#err(msg)) { return #err(msg) };
-                  case (#ok(())) {};
-                };
-
-                var charged = false;
-                if (icp_e8s > 0) {
-                  switch (await chargeUser(caller, icp_e8s)) {
-                    case (#err(msg)) { return #err(msg) };
-                    case (#ok(_)) { charged := true };
-                  };
-                };
-
-                if (icp_e8s > 0) {
-                  let amountToConvert = if (icp_e8s > ICP_TO_CYCLES_BUFFER_E8S) { icp_e8s - ICP_TO_CYCLES_BUFFER_E8S } else { 0 };
-                  ignore await convertToCycles(amountToConvert);
-                };
-
                 audit("Retrieved encrypted image for seed " # normalizedName, caller);
                 #ok((cipher, ivVal));
               };
