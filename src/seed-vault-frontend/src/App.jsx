@@ -44,6 +44,18 @@ function wordArrayToUint8(wordArray) {
   return bytes;
 }
 
+function bytesToBase64(bytes) {
+  if (!bytes) return '';
+  const uint8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = '';
+  const chunkSize = 1024;
+  for (let i = 0; i < uint8.length; i += chunkSize) {
+    const chunk = uint8.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
+}
+
 function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
 }
@@ -823,8 +835,8 @@ function App() {
       const phraseText = await decrypt(new Uint8Array(seedCipher), primary, new Uint8Array(seedIv));
       persistDecryptedSeed(normalizedName, phraseText);
 
-      const seedCipherBase64 = btoa(String.fromCharCode(...new Uint8Array(seedCipher)));
-      const seedIvBase64 = btoa(String.fromCharCode(...new Uint8Array(seedIv)));
+      const seedCipherBase64 = bytesToBase64(seedCipher);
+      const seedIvBase64 = bytesToBase64(seedIv);
 
       let imageSnapshot = null;
       // imageCipherOpt and imageIvOpt are optionals; unwrap safely and only decrypt if both exist and have data
@@ -847,8 +859,8 @@ function App() {
         const url = URL.createObjectURL(blob);
         setDecryptedImages((prev) => ({ ...prev, [normalizedName]: url }));
 
-        const imageCipherBase64 = btoa(String.fromCharCode(...imageCipherBytes));
-        const imageIvBase64 = btoa(String.fromCharCode(...imageIvBytes));
+        const imageCipherBase64 = bytesToBase64(imageCipherBytes);
+        const imageIvBase64 = bytesToBase64(imageIvBytes);
         imageSnapshot = { cipher: imageCipherBase64, iv: imageIvBase64 };
       }
 
@@ -1066,8 +1078,10 @@ function App() {
       setEncryptedSnapshots((prev) => ({
         ...prev,
         [trimmedName]: {
-          cipher: btoa(String.fromCharCode(...cipher)),
-          iv: btoa(String.fromCharCode(...iv)),
+          seed: {
+            cipher: bytesToBase64(cipher),
+            iv: bytesToBase64(iv),
+          },
         },
       }));
       await loadSeeds();
@@ -1465,12 +1479,8 @@ function App() {
                                       const seedResult = await backendActor.get_seed_cipher(seedName);
                                       if ('err' in seedResult) throw new Error(seedResult.err);
                                       const [seedCipher, seedIv] = seedResult.ok;
-                                      const seedCipherBase64 = btoa(
-                                        String.fromCharCode(...new Uint8Array(seedCipher)),
-                                      );
-                                      const seedIvBase64 = btoa(
-                                        String.fromCharCode(...new Uint8Array(seedIv)),
-                                      );
+                                      const seedCipherBase64 = bytesToBase64(seedCipher);
+                                      const seedIvBase64 = bytesToBase64(seedIv);
 
                                       let imageSnapshot = null;
                                       if (hasImages[seedName]) {
@@ -1478,12 +1488,8 @@ function App() {
                                         if ('err' in imageResult) throw new Error(imageResult.err);
                                         const [imageCipher, imageIv] = imageResult.ok;
                                         if (imageCipher?.length > 0 && imageIv?.length > 0) {
-                                          const imageCipherBase64 = btoa(
-                                            String.fromCharCode(...new Uint8Array(imageCipher)),
-                                          );
-                                          const imageIvBase64 = btoa(
-                                            String.fromCharCode(...new Uint8Array(imageIv)),
-                                          );
+                                          const imageCipherBase64 = bytesToBase64(imageCipher);
+                                          const imageIvBase64 = bytesToBase64(imageIv);
                                           imageSnapshot = { cipher: imageCipherBase64, iv: imageIvBase64 };
                                         }
                                       }
