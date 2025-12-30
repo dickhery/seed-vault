@@ -118,12 +118,11 @@ persistent actor Self {
   let DECRYPT_CYCLE_COST : Nat = 0;
   let PRICING_REFRESH_INTERVAL_NS : Int = 300_000_000_000; // 5 minutes
   let FALLBACK_RETRY_INTERVAL_NS : Int = 60_000_000_000; // 1 minute between fallback retries
-  // The XRC requires at least 1B cycles to be attached to each request. Keep a
-  // small buffer above that to avoid transient `NotEnoughCycles` rejections on
-  // saturated replicas. This improves the likelihood of live pricing succeeding
-  // across environments, including mobile browsers that rely on the same
-  // backend canister state.
-  let XRC_CALL_CYCLES : Nat = 1_100_000_000;
+  // The XRC requires at least 1B cycles to be attached to each request. Send a
+  // larger 12B allowance so we avoid intermittent `NotEnoughCycles` rejections
+  // on busier subnets and during cache misses, which otherwise force the UI to
+  // fall back to stale pricing and show zero/near-zero costs.
+  let XRC_CALL_CYCLES : Nat = 12_000_000_000;
   // Match the cycles attached in vetkd_derive_key so pricing reflects the
   // actual derivation cost instead of an inflated estimate.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
@@ -367,7 +366,10 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
       timestamp = null;
     };
-    let fallback_rate : Nat = 2_000_000_000; // Fallback XDR per ICP *1e9 (≈2 XDR per ICP)
+    // Conservative fallback XDR/ICP (1 XDR per ICP) to overestimate cost when
+    // live pricing fails, preventing under-billing that could leave the
+    // canister without enough cycles to complete vetKD calls.
+    let fallback_rate : Nat = 1_000_000_000;
     var balance = ExperimentalCycles.balance();
     var fallbackUsed = false;
 
@@ -392,21 +394,37 @@ persistent actor Self {
       };
     };
 
-    let to_add = Nat.min(balance, XRC_CALL_CYCLES);
-    if (to_add > 0) {
-      ExperimentalCycles.add(to_add);
-    } else {
-      fallbackUsed := true;
-    };
-
-    let rateResult : XrcGetExchangeRateResult = if (to_add > 0) {
-      try {
-        await XRC.get_exchange_rate(request)
-      } catch (_) {
+    let MIN_XRC_CYCLES : Nat = 1_000_000_000;
+    var attempts : Nat = 0;
+    var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
+    label retries while (attempts < 3) {
+      let to_add = Nat.min(balance, XRC_CALL_CYCLES);
+      if (to_add < MIN_XRC_CYCLES) {
         fallbackUsed := true;
-        #Err("xrc unavailable")
-      }
-    } else { #Err("insufficient cycles to call xrc") };
+        break retries;
+      };
+
+      ExperimentalCycles.add(to_add);
+      let attempt = try {
+        await XRC.get_exchange_rate(request)
+      } catch (_) { #Err("xrc unavailable") };
+
+      switch (attempt) {
+        case (#Ok(_)) {
+          rateResult := attempt;
+          break retries;
+        };
+        case (#Err(_)) {
+          attempts += 1;
+          if (attempts >= 3) {
+            rateResult := attempt;
+            fallbackUsed := true;
+          };
+        };
+      };
+
+      balance := ExperimentalCycles.balance();
+    };
 
     let rateNat : Nat = switch (rateResult) {
       case (#Ok({ rate })) {
