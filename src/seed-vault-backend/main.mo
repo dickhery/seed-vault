@@ -797,7 +797,6 @@ persistent actor Self {
   };
 
   public query ({ caller }) func seed_count() : async Nat {
-    ensureSeedsMigrated();
     switch (findOwnerIndex(caller)) {
       case (?idx) { let (_, seeds) = seedsByOwnerV2[idx]; seeds.size() };
       case null { 0 };
@@ -805,7 +804,6 @@ persistent actor Self {
   };
 
   public query ({ caller }) func get_seed_names() : async [{ name : Text; has_image : Bool }] {
-    ensureSeedsMigrated();
     switch (findOwnerIndex(caller)) {
       case (?idx) {
         let (_, seeds) = seedsByOwnerV2[idx];
@@ -870,6 +868,7 @@ persistent actor Self {
     image_cipher : ?Blob,
     image_iv : ?Blob,
   ) : async Result.Result<(), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -980,6 +979,7 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func delete_seed(name : Text) : async Result.Result<(), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1019,6 +1019,7 @@ persistent actor Self {
     image_cipher : Blob,
     image_iv : Blob,
   ) : async Result.Result<(), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1115,6 +1116,7 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func get_seed_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1173,6 +1175,7 @@ persistent actor Self {
     name : Text,
     transport_public_key : Blob,
   ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1242,6 +1245,7 @@ persistent actor Self {
   };
 
   public shared ({ caller }) func get_image_cipher(name : Text) : async Result.Result<(Blob, Blob), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1301,6 +1305,7 @@ persistent actor Self {
     name : Text,
     transport_public_key : Blob,
   ) : async Result.Result<(Blob, Blob, Blob), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1376,6 +1381,7 @@ persistent actor Self {
     name : Text,
     transport_public_key : Blob,
   ) : async Result.Result<(Blob, Blob, ?Blob, ?Blob, Blob), Text> {
+    ensureSeedsMigrated();
     let normalizedName = switch (validateRequestedName(name)) {
       case (#err(msg)) { return #err(msg) };
       case (#ok(n)) { n };
@@ -1495,5 +1501,9 @@ persistent actor Self {
     };
 
     await convertToCycles(balance - ICP_TRANSFER_FEE);
+  };
+
+  system func preupgrade() {
+    ensureSeedsMigrated();
   };
 };

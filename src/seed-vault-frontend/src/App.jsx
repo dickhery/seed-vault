@@ -1488,17 +1488,19 @@ function App() {
                                         }
                                       }
 
-                                      setEncryptedSnapshots((prev) => ({
-                                        ...prev,
-                                        [seedName]: {
-                                          seed: { cipher: seedCipherBase64, iv: seedIvBase64 },
-                                          image: imageSnapshot,
-                                        },
-                                      }));
-                                    } catch (error) {
-                                      setStatus('Failed to fetch encrypted data.');
-                                      return;
-                                    }
+                                    setEncryptedSnapshots((prev) => ({
+                                      ...prev,
+                                      [seedName]: {
+                                        seed: { cipher: seedCipherBase64, iv: seedIvBase64 },
+                                        image: imageSnapshot,
+                                      },
+                                    }));
+                                  } catch (error) {
+                                    console.error('Failed to fetch encrypted data:', error);
+                                    const message = error?.message || 'Unknown error';
+                                    setStatus(`Failed to fetch encrypted data: ${message}`);
+                                    return;
+                                  }
                                   }
 
                                   setShowEncrypted((prev) => ({
