@@ -787,7 +787,7 @@ function App() {
       const confirmed = window.confirm(
         `Decrypting "${normalizedName}"${imageMention} will cost ~${formatIcp(required)} ICP (including ledger fee and buffer).${
           fallback ? ' (Using fallback exchange rate estimate.)' : ''
-        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed data will auto-hide and clear after 5 minutes.`,
+        } Continue?\n\nWarning: Decrypt only on trusted devices. Seed data will Auto-encrypt and clear after 5 minutes.`,
       );
       if (!confirmed) {
         setDecryptingSeeds((prev) => ({ ...prev, [seedName]: false }));
@@ -1422,7 +1422,7 @@ function App() {
             {status && <p className="status">{status}</p>}
             {showProcessingNotice && (
               <div className="processing-notice" role="status">
-                Processing may take up to 45 seconds due to secure key derivation on the blockchain.
+                Processing may take up to 45 seconds due to several backend transactions and secure key derivation on the blockchain.
                 Please wait...
               </div>
             )}
@@ -1453,7 +1453,7 @@ function App() {
                             />
                             {seedExpirations[seedName] > nowTs && (
                               <p className="muted">
-                                Auto-hide in{' '}
+                                Auto-encrypt in{' '}
                                 {`${Math.max(
                                   0,
                                   Math.floor((seedExpirations[seedName] - nowTs) / 1000),

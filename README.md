@@ -45,7 +45,7 @@ Unlike centralized storage solutions, Seed Vault uses ICP's distributed architec
    - Clicking it shows a popup with the estimated ICP cost and requires confirmation.
    - After payment, the app retrieves the encrypted ciphertext and IV from the canister.
    - A fresh symmetric key is derived using vetKeys.
-   - Decryption happens client-side in the browser, displaying the plaintext seed phrase temporarily. The phrase auto-hides after 5 minutes for security.
+   - Decryption happens client-side in the browser, displaying the plaintext seed phrase temporarily. The phrase Auto-encrypts after 5 minutes for security.
 
 5. **Billing and Cycles Management**:
    - Operations like key derivation (vetKD calls) and encryption/decryption consume cycles (ICP's computation unit).
