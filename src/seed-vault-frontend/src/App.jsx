@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { AuthClient } from '@dfinity/auth-client';
 import { Principal } from '@dfinity/principal';
@@ -229,7 +229,7 @@ function App() {
 
   const principalText = useMemo(() => getPrincipalText(identity), [identity]);
 
-  const isSecureContext = useMemo(() => {
+  const isSecureContext = useCallback(() => {
     if (typeof window === 'undefined') return true;
     if (window.isSecureContext) return true;
     const { protocol, hostname } = window.location;
@@ -404,7 +404,7 @@ function App() {
   }, [identity, principalText]);
 
   async function login() {
-    if (!isSecureContext) {
+    if (!isSecureContext()) {
       setStatus('Login requires HTTPS or localhost to enable WebAuthn. Please reopen the app over HTTPS.');
       return;
     }
@@ -1179,12 +1179,12 @@ function App() {
             </>
           ) : (
             <>
-              {!isSecureContext && (
+              {!isSecureContext() && (
                 <p className="status warning">
                   WebAuthn is blocked on insecure origins. Open the app via HTTPS or localhost, then try again.
                 </p>
               )}
-              <button onClick={login} disabled={!isSecureContext || !authReady}>
+              <button onClick={login} disabled={!isSecureContext() || !authReady}>
                 Login with Internet Identity
               </button>
             </>
@@ -1208,7 +1208,7 @@ function App() {
                       type="button"
                       className={`copy-button ${copyStatus === 'Copied!' ? 'copied' : ''}`}
                       onClick={async () => {
-                        if (!isSecureContext) {
+                        if (!isSecureContext()) {
                           setStatus('Copy is only available over HTTPS or localhost.');
                           return;
                         }
@@ -1392,6 +1392,12 @@ function App() {
                       setImagePreviewName('');
                       return;
                     }
+                    if (!file.type?.startsWith('image/')) {
+                      setStatus('Only image uploads are allowed.');
+                      setImageFile(null);
+                      setImagePreviewName('');
+                      return;
+                    }
                     if (file.size > 1_048_576) {
                       setStatus('Image too large. Max size is 1MB.');
                       setImageFile(null);
@@ -1526,7 +1532,7 @@ function App() {
                                     return;
                                   }
 
-                                  if (!isSecureContext) {
+                                  if (!isSecureContext()) {
                                     setStatus('Copy is only available over HTTPS or localhost.');
                                     return;
                                   }
