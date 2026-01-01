@@ -1580,7 +1580,7 @@ function App() {
                             )}
                           </>
                         )}
-                        {decryptedImages[seedName] && (
+                        {decryptedImages[seedName] && !hiddenSeeds[seedName] && (
                           <div className="image-preview">
                             <p className="muted">Decrypted image preview</p>
                             <img
