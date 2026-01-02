@@ -123,7 +123,8 @@ persistent actor Self {
   let IC : VetKdApi = actor "aaaaa-aa";
   // Ledger actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
   private func ledger() : Ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : Ledger;
-  let XRC : Xrc = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
+  // XRC actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
+  private func xrc() : Xrc = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : Xrc;
   let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
@@ -451,7 +452,7 @@ persistent actor Self {
 
       ExperimentalCycles.add(to_add);
       let attempt : XrcGetExchangeRateResult = try {
-        await XRC.get_exchange_rate(request)
+        await xrc().get_exchange_rate(request)
       } catch (_) { #Err(#FailedToFetchCryptoRates) };
 
       switch (attempt) {
