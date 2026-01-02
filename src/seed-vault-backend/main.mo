@@ -123,8 +123,10 @@ persistent actor Self {
   let IC : VetKdApi = actor "aaaaa-aa";
   // Ledger actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
   private func ledger() : Ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : Ledger;
-  // XRC actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
-  private func xrc() : Xrc = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : Xrc;
+  // Preserve the legacy stable variable so upgrades do not attempt to drop it; the
+  // helper below returns this reference to keep usage unchanged.
+  stable var XRC : Xrc = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : Xrc;
+  private func xrc() : Xrc = XRC;
   let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
