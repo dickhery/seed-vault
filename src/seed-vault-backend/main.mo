@@ -50,7 +50,34 @@ persistent actor Self {
   // the field name as `class` (the standard keyword-escape mapping in Motoko).
   type XrcAsset = { symbol : Text; class_ : { #Cryptocurrency; #FiatCurrency } };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
-  type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
+
+  // XRC result types mirror the public specification. Keep the rich metadata even if
+  // the caller only needs the `rate`, so candid decoding stays compatible with the
+  // remote canister.
+  type XrcTimestamp = { timestamp : Nat64; usd_rate : ?Nat64 };
+  type XrcExchangeRate = {
+    rate : Nat64;
+    base_timestamp : XrcTimestamp;
+    quote_timestamp : XrcTimestamp;
+    base_rates : [Nat64];
+    quote_rates : [Nat64];
+  };
+  type XrcExchangeRateError = {
+    #CryptoAssetNotFound;
+    #StablecoinRateNotFound;
+    #ForexInvalidTimestamp;
+    #ForexAssetNotFound;
+    #ForexSourceNotFound;
+    #FailedToFetchForexRates;
+    #FailedToFetchCryptoRates;
+    #NotEnoughCryptoRates : Nat64;
+    #NotEnoughForexRates : Nat64;
+    #RateNotFound;
+    #InvalidRequest;
+    #InvalidTimestamp;
+    #InvalidAssets;
+  };
+  type XrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : XrcExchangeRateError };
   type Xrc = actor {
     // XRC is an update call that requires cycles; declaring it as such ensures cycles
     // are attached and the request is accepted.
@@ -445,8 +472,8 @@ persistent actor Self {
     };
 
     let rateNat : Nat = switch (rateResult) {
-      case (#Ok({ rate })) {
-        let r = Nat64.toNat(rate);
+      case (#Ok(ok)) {
+        let r = Nat64.toNat(ok.rate);
         let accepted = if (last_xdr_per_icp_rate == 0) {
           r
         } else {
