@@ -441,7 +441,7 @@ persistent actor Self {
     };
 
     var attempts : Nat = 0;
-    var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
+    var rateResult : XrcGetExchangeRateResult = #Err(#InvalidRequest);
     label retries while (attempts < 5) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
@@ -450,9 +450,9 @@ persistent actor Self {
       };
 
       ExperimentalCycles.add(to_add);
-      let attempt = try {
+      let attempt : XrcGetExchangeRateResult = try {
         await XRC.get_exchange_rate(request)
-      } catch (_) { #Err("xrc unavailable") };
+      } catch (_) { #Err(#FailedToFetchCryptoRates) };
 
       switch (attempt) {
         case (#Ok(_)) {
