@@ -15,7 +15,7 @@ import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
 
-persistent actor Self {
+actor Self {
   // Type definitions for vetKD interactions
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -77,6 +77,13 @@ persistent actor Self {
     #InvalidTimestamp;
     #InvalidAssets;
   };
+  // Legacy XRC shape kept solely for stable upgrade compatibility; do not use for
+  // new calls because the remote canister now returns richer error variants.
+  type XrcLegacyGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
+  type XrcLegacy = actor {
+    get_exchange_rate : shared (XrcGetExchangeRateRequest) -> async XrcLegacyGetExchangeRateResult;
+  };
+
   type XrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : XrcExchangeRateError };
   type Xrc = actor {
     // XRC is an update call that requires cycles; declaring it as such ensures cycles
@@ -123,10 +130,10 @@ persistent actor Self {
   let IC : VetKdApi = actor "aaaaa-aa";
   // Ledger actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
   private func ledger() : Ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : Ledger;
-  // Preserve the legacy stable variable so upgrades do not attempt to drop it; the
-  // helper below returns this reference to keep usage unchanged.
-  stable var XRC : Xrc = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : Xrc;
-  private func xrc() : Xrc = XRC;
+  // Preserve the original stable variable type for upgrade compatibility only.
+  stable var XRC : XrcLegacy = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : XrcLegacy;
+  // Always construct a fresh actor reference with the current interface when making requests.
+  private func xrc() : Xrc = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : Xrc;
   let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
