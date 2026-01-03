@@ -48,7 +48,7 @@ persistent actor Self {
   // XRC exchange rate types. Motoko reserves `class` as a keyword; the trailing
   // underscore keeps the Motoko identifier valid while Candid still serializes
   // the field name as `class` (the standard keyword-escape mapping in Motoko).
-  type XrcAssetClass = { #Cryptocurrency; #FiatCurrency };
+  type XrcAssetClass = variant { #Cryptocurrency; #FiatCurrency };
   type XrcAsset = { symbol : Text; class_ : XrcAssetClass };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
 
@@ -453,7 +453,7 @@ persistent actor Self {
     };
 
     var attempts : Nat = 0;
-    var rateResult : XrcGetExchangeRateResult = #Err(#Other { code = 0; description = "xrc not attempted" });
+    var rateResult : XrcGetExchangeRateResult = #Err(#Other { code = Nat32.fromNat(0); description = "xrc not attempted" });
     label retries while (attempts < 20) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
@@ -462,9 +462,9 @@ persistent actor Self {
       };
 
       ExperimentalCycles.add(to_add);
-      let attempt = try {
+      let attempt : XrcGetExchangeRateResult = try {
         await XRC.get_exchange_rate(request)
-      } catch (_) { #Err(#Other { code = 0; description = "xrc unavailable" }) };
+      } catch (_) { #Err(#Other { code = Nat32.fromNat(0); description = "xrc unavailable" }) };
 
       switch (attempt) {
         case (#Ok(_)) {
