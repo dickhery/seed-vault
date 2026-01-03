@@ -1602,13 +1602,15 @@ function App() {
                             {decryptingSeeds[seedName] && <span className="loading-spinner" />}
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => setAddingImageFor(seedName)}
-                          disabled={loading}
-                        >
-                          Add image
-                        </button>
+                        {!hasImages[seedName] && (
+                          <button
+                            type="button"
+                            onClick={() => setAddingImageFor(seedName)}
+                            disabled={loading}
+                          >
+                            Add image
+                          </button>
+                        )}
                         <button
                           onClick={() => deleteSeed(seedName)}
                           disabled={decryptingSeeds[seedName] || deletingSeeds[seedName] || loading}
