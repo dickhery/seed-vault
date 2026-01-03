@@ -48,9 +48,45 @@ persistent actor Self {
   // XRC exchange rate types. Motoko reserves `class` as a keyword; the trailing
   // underscore keeps the Motoko identifier valid while Candid still serializes
   // the field name as `class` (the standard keyword-escape mapping in Motoko).
-  type XrcAsset = { symbol : Text; class_ : { #Cryptocurrency; #FiatCurrency } };
+  type XrcAssetClass = { #Cryptocurrency; #FiatCurrency };
+  type XrcAsset = { symbol : Text; class_ : XrcAssetClass };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
-  type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
+
+  type XrcExchangeRateMetadata = {
+    decimals : Nat32;
+    base_asset_num_received_rates : Nat64;
+    base_asset_num_queried_sources : Nat64;
+    quote_asset_num_received_rates : Nat64;
+    quote_asset_num_queried_sources : Nat64;
+  };
+
+  type XrcOk = {
+    base_asset : XrcAsset;
+    quote_asset : XrcAsset;
+    timestamp : Nat64;
+    rate : Nat64;
+    metadata : XrcExchangeRateMetadata;
+  };
+
+  type XrcErr = {
+    #CryptoBaseAssetNotFound;
+    #CryptoQuoteAssetNotFound;
+    #StablecoinRateTooFewRates;
+    #StablecoinRateNotFound;
+    #StablecoinRateTooFewSources;
+    #ForexInvalidTimestamp;
+    #ForexBaseAssetNotFound;
+    #ForexQuoteAssetNotFound;
+    #ForexAssetsNotFound;
+    #RateTooFewRates;
+    #RateTooFewSources;
+    #RateLimited;
+    #NotEnoughCycles;
+    #AnonymousPrincipalNotAllowed;
+    #Other : { code : Nat32; description : Text };
+  };
+
+  type XrcGetExchangeRateResult = { #Ok : XrcOk; #Err : XrcErr };
   type Xrc = actor {
     // XRC is an update call that requires cycles; declaring it as such ensures cycles
     // are attached and the request is accepted.
@@ -413,7 +449,7 @@ persistent actor Self {
     };
 
     var attempts : Nat = 0;
-    var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
+    var rateResult : XrcGetExchangeRateResult = #Err(#Other { code = 0; description = "xrc not attempted" });
     label retries while (attempts < 20) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
@@ -424,7 +460,7 @@ persistent actor Self {
       ExperimentalCycles.add(to_add);
       let attempt = try {
         await XRC.get_exchange_rate(request)
-      } catch (_) { #Err("xrc unavailable") };
+      } catch (_) { #Err(#Other { code = 0; description = "xrc unavailable" }) };
 
       switch (attempt) {
         case (#Ok(_)) {
@@ -463,8 +499,15 @@ persistent actor Self {
         last_xdr_refresh_ns := now;
         accepted
       };
-      case (#Err(_)) {
+      case (#Err(err)) {
         fallbackUsed := true;
+        let errMsg = switch (err) {
+          case (#NotEnoughCycles) { "not enough cycles" };
+          case (#RateLimited) { "rate limited" };
+          case (#Other { description }) { "other: " # description };
+          case (_) { "unhandled" };
+        };
+        Debug.print("[XRC] Error: " # errMsg);
         let rateChoice = if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate };
         if (last_xdr_per_icp_rate == 0) {
           last_xdr_per_icp_rate := rateChoice;
