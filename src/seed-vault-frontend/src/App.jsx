@@ -235,7 +235,7 @@ function App() {
     // to legacy calls if the interface differs.
     try {
       if (backendActor.estimate_cost_v2) {
-        const estimate = await backendActor.estimate_cost_v2(operation, payloadCount);
+        const estimate = await backendActor.estimate_cost_v2({ operation, count: payloadCount });
         console.log(`Estimate for ${operation} (${count}):`, estimate);
         return normalizeEstimate(estimate);
       }

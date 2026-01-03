@@ -809,15 +809,14 @@ persistent actor Self {
   };
 
   // Backward-compatible estimator that accepts a record so argument ordering mismatches
-  // in older generated bindings cannot trigger a decode trap. The frontend uses this
-  // Tuple signature to stay compatible with the deployed canister interface and avoid
-  // IDL "unexpected type" traps when the frontend passes (Text, Nat).
-  public shared ({ caller }) func estimate_cost_v2(operation : Text, count : Nat) : async {
+  // in generated bindings cannot trigger a decode trap. The frontend sends a record and
+  // falls back to the tuple-based legacy signature if needed.
+  public shared ({ caller }) func estimate_cost_v2(args : { operation : Text; count : Nat }) : async {
     cycles : Nat;
     icp_e8s : Nat;
     fallback_used : Bool;
   } {
-    await estimateCostInternal(operation, count, caller);
+    await estimateCostInternal(args.operation, args.count, caller);
   };
 
   public query ({ caller }) func seed_count() : async Nat {
