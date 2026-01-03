@@ -211,17 +211,45 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const seedClearTimeouts = useRef({});
 
+  const isIdlMismatch = (error) => {
+    if (!error) return false;
+    const msg = String(error?.message || error?.toString?.() || error);
+    return msg.includes('unexpected IDL type') || msg.includes('IC0503');
+  };
+
+  function normalizeEstimate(est = {}) {
+    const icp_e8s = typeof est.icp_e8s === 'bigint' ? est.icp_e8s : BigInt(est.icp_e8s || 0);
+    const cycles = typeof est.cycles === 'bigint' ? est.cycles : BigInt(est.cycles || 0);
+    const fallback_used = Boolean(est.fallback_used);
+    return { icp_e8s, cycles, fallback_used };
+  }
+
   async function estimateCost(operation, count) {
+    if (!backendActor) {
+      throw new Error('Backend is not initialized yet. Please re-authenticate.');
+    }
+
+    const payloadCount = BigInt(count);
+
+    // Prefer the record-based endpoint but gracefully fall back to the tuple
+    // signature if the deployed canister rejects due to IDL shape mismatches.
     try {
-      if (!backendActor) {
-        throw new Error('Backend is not initialized yet. Please re-authenticate.');
+      if (backendActor.estimate_cost_v2) {
+        const estimate = await backendActor.estimate_cost_v2({ operation, count: payloadCount });
+        console.log(`Estimate for ${operation} (${count}):`, estimate);
+        return normalizeEstimate(estimate);
       }
-      const payloadCount = BigInt(count);
-      const estimate = backendActor.estimate_cost_v2
-        ? await backendActor.estimate_cost_v2({ operation, count: payloadCount })
-        : await backendActor.estimate_cost(operation, payloadCount);
-      console.log(`Estimate for ${operation} (${count}):`, estimate);
-      return estimate;
+    } catch (error) {
+      console.warn('estimate_cost_v2 failed, attempting legacy call:', error);
+      if (!isIdlMismatch(error)) {
+        throw error;
+      }
+    }
+
+    try {
+      const estimate = await backendActor.estimate_cost(operation, payloadCount);
+      console.log(`Legacy estimate for ${operation} (${count}):`, estimate);
+      return normalizeEstimate(estimate);
     } catch (error) {
       console.error(`Estimate failed for ${operation}:`, error);
       return { icp_e8s: BigInt(0), fallback_used: true };

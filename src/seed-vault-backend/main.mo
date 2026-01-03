@@ -164,8 +164,11 @@ persistent actor Self {
   // Significantly loosen rate limits and shorten the reset window to reduce spurious
   // rejections during heavier usage (for example, when users add images and decrypt
   // multiple seeds in quick succession).
-  let RATE_LIMIT : Nat = 24_000; // operations per reset interval
-  let GLOBAL_RATE_LIMIT : Nat = 240_000; // overall operations per reset interval
+  // Allow substantially more operations per window to avoid throttling legitimate bursts
+  // (e.g., users decrypting many seeds back-to-back). Keep the short reset for quicker
+  // recovery.
+  let RATE_LIMIT : Nat = 100_000; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 1_000_000; // overall operations per reset interval
   let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
 
   // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
