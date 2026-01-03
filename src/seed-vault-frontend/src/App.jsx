@@ -182,6 +182,7 @@ function App() {
   const [decryptingSeeds, setDecryptingSeeds] = useState({});
   const [deletingSeeds, setDeletingSeeds] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingPricing, setIsRefreshingPricing] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
   const [estimatedCost, setEstimatedCost] = useState(null);
   const [copyStatuses, setCopyStatuses] = useState({});
@@ -210,15 +211,49 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const seedClearTimeouts = useRef({});
 
+  const isIdlMismatch = (error) => {
+    if (!error) return false;
+    const msg = String(error?.message || error?.toString?.() || error);
+    return msg.includes('unexpected IDL type') || msg.includes('IC0503');
+  };
+
+  function normalizeEstimate(est = {}) {
+    const icp_e8s = typeof est.icp_e8s === 'bigint' ? est.icp_e8s : BigInt(est.icp_e8s || 0);
+    const cycles = typeof est.cycles === 'bigint' ? est.cycles : BigInt(est.cycles || 0);
+    const fallback_used = Boolean(est.fallback_used);
+    return { icp_e8s, cycles, fallback_used };
+  }
+
   async function estimateCost(operation, count) {
     if (!backendActor) {
       throw new Error('Backend is not initialized yet. Please re-authenticate.');
     }
+
     const payloadCount = BigInt(count);
-    if (backendActor.estimate_cost_v2) {
-      return backendActor.estimate_cost_v2({ operation, count: payloadCount });
+
+    // Prefer the tuple-based endpoint used by the deployed canister and fall back
+    // to legacy calls if the interface differs.
+    try {
+      if (backendActor.estimate_cost_v2) {
+        const estimate = await backendActor.estimate_cost_v2({ operation, count: payloadCount });
+        console.log(`Estimate for ${operation} (${count}):`, estimate);
+        return normalizeEstimate(estimate);
+      }
+    } catch (error) {
+      console.warn('estimate_cost_v2 failed, attempting legacy call:', error);
+      if (!isIdlMismatch(error)) {
+        throw error;
+      }
     }
-    return backendActor.estimate_cost(operation, payloadCount);
+
+    try {
+      const estimate = await backendActor.estimate_cost(operation, payloadCount);
+      console.log(`Legacy estimate for ${operation} (${count}):`, estimate);
+      return normalizeEstimate(estimate);
+    } catch (error) {
+      console.error(`Estimate failed for ${operation}:`, error);
+      return { icp_e8s: BigInt(0), fallback_used: true };
+    }
   }
 
   const decryptingAny = useMemo(
@@ -471,6 +506,7 @@ function App() {
   async function loadAccount() {
     setIsRefreshing(true);
     let hadError = false;
+    let pricingSnapshot = null;
     try {
       try {
         const details = await backendActor.get_account_details();
@@ -489,23 +525,24 @@ function App() {
       }
 
       try {
-      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
-        estimateCost('encrypt', 1),
-        estimateCost('decrypt', 1),
-        estimateCost('derive', 1),
-      ]);
+        pricingSnapshot = backendActor.pricing_status ? await backendActor.pricing_status() : null;
+      } catch (error) {
+        console.error('pricing_status failed', error);
+        hadError = true;
+        pricingSnapshot = { last_refresh_nanoseconds: BigInt(0), fallback_used: true };
+      }
+
+      try {
+        const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
+          estimateCost('encrypt', 1),
+          estimateCost('decrypt', 1),
+          estimateCost('derive', 1),
+        ]);
         const fallback =
           encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-        const costE8s = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+        const costE8s =
+          Number(encryptEstimate.icp_e8s ?? 0n) + Number(deriveEstimate.icp_e8s ?? 0n) + LEDGER_FEE_E8S;
         setEstimatedCost(formatIcp(costE8s));
-
-        let pricingSnapshot = null;
-        try {
-          pricingSnapshot = backendActor.pricing_status ? await backendActor.pricing_status() : null;
-        } catch (error) {
-          console.error('pricing_status failed', error);
-          hadError = true;
-        }
 
         const refreshedAtNs = pricingSnapshot?.last_refresh_nanoseconds;
         let refreshedAt;
@@ -527,8 +564,11 @@ function App() {
           );
         }
       } catch (error) {
-      console.error('estimate_cost failed', error);
+        console.error('estimate_cost failed', error);
         hadError = true;
+        setEstimatedCost('unavailable');
+        setUsingFallbackPricing(true);
+        setStatus('Live pricing unavailable. Using fallback estimates.');
       }
 
       if (hadError) {
@@ -538,6 +578,24 @@ function App() {
       setStatus('Unable to fetch account details. Please try again.');
     } finally {
       setIsRefreshing(false);
+    }
+  }
+
+  async function refreshPricing() {
+    if (!backendActor) return;
+    setIsRefreshingPricing(true);
+    setStatus('Refreshing pricing...');
+    try {
+      if (backendActor.convert_collected_icp) {
+        await backendActor.convert_collected_icp();
+      }
+      await loadAccount();
+      setStatus('Pricing refreshed.');
+    } catch (error) {
+      console.error('refreshPricing failed', error);
+      setStatus('Unable to refresh pricing right now. Please try again.');
+    } finally {
+      setIsRefreshingPricing(false);
     }
   }
 
@@ -1238,7 +1296,11 @@ function App() {
                       <p className="muted">A 0.0001 ICP ledger fee is reserved for each charge.</p>
                       <p className="muted">
                         Estimated cost per encrypt/decrypt: ~
-                        {estimatedCost ? `${estimatedCost} ICP` : 'loading...'}
+                        {estimatedCost === null
+                          ? 'loading...'
+                          : estimatedCost === 'unavailable'
+                            ? 'unavailable'
+                            : `${estimatedCost} ICP`}
                       </p>
                     <p className="muted">
                       Last refreshed:{' '}
@@ -1265,6 +1327,14 @@ function App() {
             <button onClick={loadAccount} disabled={isRefreshing || loading} className={isRefreshing ? 'button-loading' : ''}>
               Refresh balance & cycles
               {isRefreshing && <span className="loading-spinner" />}
+            </button>
+            <button
+              onClick={refreshPricing}
+              disabled={isRefreshingPricing || loading}
+              className={isRefreshingPricing ? 'button-loading' : ''}
+            >
+              Refresh pricing
+              {isRefreshingPricing && <span className="loading-spinner" />}
             </button>
             {!isTransferOpen && (
               <button
@@ -1602,13 +1672,15 @@ function App() {
                             {decryptingSeeds[seedName] && <span className="loading-spinner" />}
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => setAddingImageFor(seedName)}
-                          disabled={loading}
-                        >
-                          Add image
-                        </button>
+                        {!hasImages[seedName] && (
+                          <button
+                            type="button"
+                            onClick={() => setAddingImageFor(seedName)}
+                            disabled={loading}
+                          >
+                            Add image
+                          </button>
+                        )}
                         <button
                           onClick={() => deleteSeed(seedName)}
                           disabled={decryptingSeeds[seedName] || deletingSeeds[seedName] || loading}

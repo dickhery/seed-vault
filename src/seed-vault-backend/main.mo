@@ -48,9 +48,49 @@ persistent actor Self {
   // XRC exchange rate types. Motoko reserves `class` as a keyword; the trailing
   // underscore keeps the Motoko identifier valid while Candid still serializes
   // the field name as `class` (the standard keyword-escape mapping in Motoko).
-  type XrcAsset = { symbol : Text; class_ : { #Cryptocurrency; #FiatCurrency } };
+  type XrcAssetClass = variant { #Cryptocurrency; #FiatCurrency };
+  type XrcAsset = { symbol : Text; class_ : XrcAssetClass };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
-  type XrcGetExchangeRateResult = { #Ok : { rate : Nat64 }; #Err : Text };
+
+  type XrcExchangeRateMetadata = {
+    decimals : Nat32;
+    forex_timestamp : ?Nat64;
+    base_asset_num_received_rates : Nat64;
+    base_asset_num_queried_sources : Nat64;
+    quote_asset_num_received_rates : Nat64;
+    quote_asset_num_queried_sources : Nat64;
+    standard_deviation : Nat64;
+  };
+
+  type XrcOk = {
+    base_asset : XrcAsset;
+    quote_asset : XrcAsset;
+    timestamp : Nat64;
+    rate : Nat64;
+    metadata : XrcExchangeRateMetadata;
+  };
+
+  // Mirror the live XRC candid so decoding never traps when new tags appear.
+  type XrcErr = variant {
+    #AnonymousPrincipalNotAllowed;
+    #CryptoQuoteAssetNotFound;
+    #FailedToAcceptCycles;
+    #ForexBaseAssetNotFound;
+    #CryptoBaseAssetNotFound;
+    #StablecoinRateTooFewRates;
+    #ForexAssetsNotFound;
+    #InconsistentRatesReceived;
+    #RateLimited;
+    #StablecoinRateZeroRate;
+    #Other : { code : Nat32; description : Text };
+    #ForexInvalidTimestamp;
+    #NotEnoughCycles;
+    #ForexQuoteAssetNotFound;
+    #StablecoinRateNotFound;
+    #Pending;
+  };
+
+  type XrcGetExchangeRateResult = variant { #Ok : XrcOk; #Err : XrcErr };
   type Xrc = actor {
     // XRC is an update call that requires cycles; declaring it as such ensures cycles
     // are attached and the request is accepted.
@@ -85,7 +125,11 @@ persistent actor Self {
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
     #InsufficientFunds : { balance : Nat };
-    #FailedToWithdraw : { rejection_code : {#NoError; #CanisterError; #SysTransient; #DestinationInvalid; #Unknown; #SysFatal; #CanisterReject}; rejection_reason : Text; fee_block : ?Nat };
+    #FailedToWithdraw : {
+      rejection_code : { #NoError; #CanisterError; #SysTransient; #DestinationInvalid; #Unknown; #SysFatal; #CanisterReject };
+      rejection_reason : Text;
+      fee_block : ?Nat;
+    };
   };
   type CyclesWithdrawResult = { #Ok : Nat; #Err : CyclesWithdrawError };
   type CyclesLedger = actor {
@@ -114,22 +158,22 @@ persistent actor Self {
   let MAX_IMAGE_BYTES : Nat = 1_048_576; // 1 MB limit for encrypted image payloads
   let MAX_SEED_NAME_CHARS : Nat = 100;
   let MAX_SEEDS_PER_USER : Nat = 50;
-  let ENCRYPT_CYCLE_COST : Nat = 0;
-  let DECRYPT_CYCLE_COST : Nat = 0;
-  let PRICING_REFRESH_INTERVAL_NS : Int = 300_000_000_000; // 5 minutes
+  let ENCRYPT_CYCLE_COST : Nat = 1_000_000_000; // ~1B cycles per encrypt
+  let DECRYPT_CYCLE_COST : Nat = 500_000_000; // ~0.5B cycles per decrypt
+  let PRICING_REFRESH_INTERVAL_NS : Int = 60_000_000_000; // 1 minute
   let FALLBACK_RETRY_INTERVAL_NS : Int = 60_000_000_000; // 1 minute between fallback retries
   // The XRC requires at least 1B cycles to be attached to each request. Send a
   // larger allowance so we avoid intermittent `NotEnoughCycles` rejections on
   // busier subnets and during cache misses, which otherwise force the UI to fall
   // back to stale pricing and show zero/near-zero costs.
-  let XRC_CALL_CYCLES : Nat = 50_000_000_000;
+  let XRC_CALL_CYCLES : Nat = 100_000_000_000;
   // Match the cycles attached in vetkd_derive_key so pricing reflects the
   // actual derivation cost instead of an inflated estimate.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
-  let ICP_TO_CYCLES_BUFFER_E8S : Nat = ICP_TRANSFER_FEE;
+  let ICP_TO_CYCLES_BUFFER_E8S : Nat = ICP_TRANSFER_FEE * 3;
   let CMC_PRINCIPAL : Principal = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");
   let MINT_MEMO : Blob = Blob.fromArray([77, 73, 78, 84, 0, 0, 0, 0]); // "MINT\00\00\00\00"
   let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
@@ -161,12 +205,11 @@ persistent actor Self {
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
 
-  // Loosen rate limits and shorten the reset window to reduce spurious rejections
-  // during heavier usage (for example, when users add images and decrypt multiple
-  // seeds in quick succession).
-  let RATE_LIMIT : Nat = 400; // operations per reset interval (300% increase)
-  let GLOBAL_RATE_LIMIT : Nat = 4_000; // overall operations per reset interval (300% increase)
-  let RESET_INTERVAL : Int = 300_000_000_000; // 5 minutes in nanoseconds
+  // Allow extremely high per-user and global throughput while retaining a short reset
+  // window so legitimate bursts are never throttled during testing or heavy usage.
+  let RATE_LIMIT : Nat = 1_000_000; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 10_000_000; // overall operations per reset interval
+  let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
 
   // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
   private func ensureSeedsMigrated() {
@@ -366,10 +409,10 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
       timestamp = null;
     };
-    // Conservative fallback XDR/ICP (1 XDR per ICP) to overestimate cost when
-    // live pricing fails, preventing under-billing that could leave the
-    // canister without enough cycles to complete vetKD calls.
-    let fallback_rate : Nat = 1_000_000_000;
+    // Conservative fallback XDR/ICP to overestimate cost when live pricing fails,
+    // preventing under-billing that could leave the canister without enough cycles
+    // to complete vetKD calls.
+    let fallback_rate : Nat = 500_000_000;
     var balance = ExperimentalCycles.balance();
     var fallbackUsed = false;
 
@@ -394,7 +437,7 @@ persistent actor Self {
       };
     };
 
-    let MIN_XRC_CYCLES : Nat = 1_000_000_000;
+    let MIN_XRC_CYCLES : Nat = 500_000_000;
     if (balance < MIN_XRC_CYCLES) {
       let selfPrincipal = Principal.fromActor(Self);
       let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
@@ -414,8 +457,8 @@ persistent actor Self {
     };
 
     var attempts : Nat = 0;
-    var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
-    label retries while (attempts < 5) {
+    var rateResult : XrcGetExchangeRateResult = #Err(#Other { code = Nat32.fromNat(0); description = "xrc not attempted" });
+    label retries while (attempts < 20) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
         fallbackUsed := true;
@@ -423,9 +466,9 @@ persistent actor Self {
       };
 
       ExperimentalCycles.add(to_add);
-      let attempt = try {
+      let attempt : XrcGetExchangeRateResult = try {
         await XRC.get_exchange_rate(request)
-      } catch (_) { #Err("xrc unavailable") };
+      } catch (_) { #Err(#Other { code = Nat32.fromNat(0); description = "xrc unavailable" }) };
 
       switch (attempt) {
         case (#Ok(_)) {
@@ -434,7 +477,7 @@ persistent actor Self {
         };
         case (#Err(_)) {
           attempts += 1;
-          if (attempts >= 5) {
+          if (attempts >= 20) {
             rateResult := attempt;
             fallbackUsed := true;
           };
@@ -464,8 +507,15 @@ persistent actor Self {
         last_xdr_refresh_ns := now;
         accepted
       };
-      case (#Err(_)) {
+      case (#Err(err)) {
         fallbackUsed := true;
+        let errMsg = switch (err) {
+          case (#NotEnoughCycles) { "not enough cycles" };
+          case (#RateLimited) { "rate limited" };
+          case (#Other { description }) { "other: " # description };
+          case (_) { "unhandled" };
+        };
+        Debug.print("[XRC] Error: " # errMsg);
         let rateChoice = if (last_xdr_per_icp_rate > 0) { last_xdr_per_icp_rate } else { fallback_rate };
         if (last_xdr_per_icp_rate == 0) {
           last_xdr_per_icp_rate := rateChoice;
@@ -475,6 +525,10 @@ persistent actor Self {
         rateChoice
       };
     };
+    Debug.print(
+      "[XRC] Refresh at " # Int.toText(now) # " result=" # debug_show(rateResult) # " rate=" # Nat.toText(rateNat)
+      # " fallback=" # debug_show(fallbackUsed),
+    );
     { rate = if (rateNat == 0) { 1 } else { rateNat }; fallback_used = fallbackUsed };
   };
 
@@ -484,6 +538,9 @@ persistent actor Self {
     };
 
     let { rate; fallback_used } = await refreshXdrRate();
+    Debug.print(
+      "[cyclesToIcp] Cycles=" # Nat.toText(cycles) # " rate=" # Nat.toText(rate) # " fallback=" # debug_show(fallback_used),
+    );
     let numerator : Nat = cycles * 100_000;
     let baseCost = numerator / rate;
     // Add a ~5% buffer to account for execution and rounding without meaningfully
@@ -803,9 +860,8 @@ persistent actor Self {
   };
 
   // Backward-compatible estimator that accepts a record so argument ordering mismatches
-  // in older generated bindings cannot trigger a decode trap. The frontend uses this
-  // endpoint to avoid the "unexpected IDL type when parsing Text" rejection seen in
-  // the legacy tuple signature.
+  // in generated bindings cannot trigger a decode trap. The frontend sends a record and
+  // falls back to the tuple-based legacy signature if needed.
   public shared ({ caller }) func estimate_cost_v2(args : { operation : Text; count : Nat }) : async {
     cycles : Nat;
     icp_e8s : Nat;
