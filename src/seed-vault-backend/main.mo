@@ -122,14 +122,14 @@ persistent actor Self {
   // larger allowance so we avoid intermittent `NotEnoughCycles` rejections on
   // busier subnets and during cache misses, which otherwise force the UI to fall
   // back to stale pricing and show zero/near-zero costs.
-  let XRC_CALL_CYCLES : Nat = 50_000_000_000;
+  let XRC_CALL_CYCLES : Nat = 100_000_000_000;
   // Match the cycles attached in vetkd_derive_key so pricing reflects the
   // actual derivation cost instead of an inflated estimate.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
   // Withdraw fee on cycles ledger (100M cycles).
   let CYCLES_WITHDRAW_FEE : Nat = 100_000_000;
   // Add a small buffer so we can pay the fee to convert collected ICP into cycles.
-  let ICP_TO_CYCLES_BUFFER_E8S : Nat = ICP_TRANSFER_FEE;
+  let ICP_TO_CYCLES_BUFFER_E8S : Nat = ICP_TRANSFER_FEE * 3;
   let CMC_PRINCIPAL : Principal = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");
   let MINT_MEMO : Blob = Blob.fromArray([77, 73, 78, 84, 0, 0, 0, 0]); // "MINT\00\00\00\00"
   let CMC : CyclesMintingCanister = actor (Principal.toText(CMC_PRINCIPAL));
@@ -161,12 +161,12 @@ persistent actor Self {
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
 
-  // Loosen rate limits and shorten the reset window to reduce spurious rejections
-  // during heavier usage (for example, when users add images and decrypt multiple
-  // seeds in quick succession).
-  let RATE_LIMIT : Nat = 2_400; // operations per reset interval (500% increase)
-  let GLOBAL_RATE_LIMIT : Nat = 24_000; // overall operations per reset interval (500% increase)
-  let RESET_INTERVAL : Int = 300_000_000_000; // 5 minutes in nanoseconds
+  // Significantly loosen rate limits and shorten the reset window to reduce spurious
+  // rejections during heavier usage (for example, when users add images and decrypt
+  // multiple seeds in quick succession).
+  let RATE_LIMIT : Nat = 24_000; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 240_000; // overall operations per reset interval
+  let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
 
   // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
   private func ensureSeedsMigrated() {
@@ -366,10 +366,10 @@ persistent actor Self {
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
       timestamp = null;
     };
-    // Conservative fallback XDR/ICP (1 XDR per ICP) to overestimate cost when
-    // live pricing fails, preventing under-billing that could leave the
-    // canister without enough cycles to complete vetKD calls.
-    let fallback_rate : Nat = 1_300_000_000;
+    // Conservative fallback XDR/ICP to overestimate cost when live pricing fails,
+    // preventing under-billing that could leave the canister without enough cycles
+    // to complete vetKD calls.
+    let fallback_rate : Nat = 500_000_000;
     var balance = ExperimentalCycles.balance();
     var fallbackUsed = false;
 
@@ -394,7 +394,7 @@ persistent actor Self {
       };
     };
 
-    let MIN_XRC_CYCLES : Nat = 1_000_000_000;
+    let MIN_XRC_CYCLES : Nat = 500_000_000;
     if (balance < MIN_XRC_CYCLES) {
       let selfPrincipal = Principal.fromActor(Self);
       let defaultAccount : Account = { owner = selfPrincipal; subaccount = null };
@@ -415,7 +415,7 @@ persistent actor Self {
 
     var attempts : Nat = 0;
     var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
-    label retries while (attempts < 10) {
+    label retries while (attempts < 20) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
         fallbackUsed := true;
@@ -434,7 +434,7 @@ persistent actor Self {
         };
         case (#Err(_)) {
           attempts += 1;
-          if (attempts >= 10) {
+          if (attempts >= 20) {
             rateResult := attempt;
             fallbackUsed := true;
           };
