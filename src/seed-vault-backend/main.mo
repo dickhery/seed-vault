@@ -54,10 +54,12 @@ persistent actor Self {
 
   type XrcExchangeRateMetadata = {
     decimals : Nat32;
+    forex_timestamp : ?Nat64;
     base_asset_num_received_rates : Nat64;
     base_asset_num_queried_sources : Nat64;
     quote_asset_num_received_rates : Nat64;
     quote_asset_num_queried_sources : Nat64;
+    standard_deviation : Nat64;
   };
 
   type XrcOk = {
@@ -68,25 +70,27 @@ persistent actor Self {
     metadata : XrcExchangeRateMetadata;
   };
 
-  type XrcErr = {
-    #CryptoBaseAssetNotFound;
-    #CryptoQuoteAssetNotFound;
-    #StablecoinRateTooFewRates;
-    #StablecoinRateNotFound;
-    #StablecoinRateTooFewSources;
-    #ForexInvalidTimestamp;
-    #ForexBaseAssetNotFound;
-    #ForexQuoteAssetNotFound;
-    #ForexAssetsNotFound;
-    #RateTooFewRates;
-    #RateTooFewSources;
-    #RateLimited;
-    #NotEnoughCycles;
+  // Mirror the live XRC candid so decoding never traps when new tags appear.
+  type XrcErr = variant {
     #AnonymousPrincipalNotAllowed;
+    #CryptoQuoteAssetNotFound;
+    #FailedToAcceptCycles;
+    #ForexBaseAssetNotFound;
+    #CryptoBaseAssetNotFound;
+    #StablecoinRateTooFewRates;
+    #ForexAssetsNotFound;
+    #InconsistentRatesReceived;
+    #RateLimited;
+    #StablecoinRateZeroRate;
     #Other : { code : Nat32; description : Text };
+    #ForexInvalidTimestamp;
+    #NotEnoughCycles;
+    #ForexQuoteAssetNotFound;
+    #StablecoinRateNotFound;
+    #Pending;
   };
 
-  type XrcGetExchangeRateResult = { #Ok : XrcOk; #Err : XrcErr };
+  type XrcGetExchangeRateResult = variant { #Ok : XrcOk; #Err : XrcErr };
   type Xrc = actor {
     // XRC is an update call that requires cycles; declaring it as such ensures cycles
     // are attached and the request is accepted.
