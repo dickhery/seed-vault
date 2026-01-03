@@ -125,7 +125,11 @@ persistent actor Self {
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
     #InsufficientFunds : { balance : Nat };
-    #FailedToWithdraw : { rejection_code : {#NoError; #CanisterError; #SysTransient; #DestinationInvalid; #Unknown; #SysFatal; #CanisterReject}; rejection_reason : Text; fee_block : ?Nat };
+    #FailedToWithdraw : {
+      rejection_code : { #NoError; #CanisterError; #SysTransient; #DestinationInvalid; #Unknown; #SysFatal; #CanisterReject };
+      rejection_reason : Text;
+      fee_block : ?Nat;
+    };
   };
   type CyclesWithdrawResult = { #Ok : Nat; #Err : CyclesWithdrawError };
   type CyclesLedger = actor {
