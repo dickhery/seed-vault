@@ -161,14 +161,10 @@ persistent actor Self {
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
 
-  // Significantly loosen rate limits and shorten the reset window to reduce spurious
-  // rejections during heavier usage (for example, when users add images and decrypt
-  // multiple seeds in quick succession).
-  // Allow substantially more operations per window to avoid throttling legitimate bursts
-  // (e.g., users decrypting many seeds back-to-back). Keep the short reset for quicker
-  // recovery.
-  let RATE_LIMIT : Nat = 100_000; // operations per reset interval
-  let GLOBAL_RATE_LIMIT : Nat = 1_000_000; // overall operations per reset interval
+  // Allow extremely high per-user and global throughput while retaining a short reset
+  // window so legitimate bursts are never throttled during testing or heavy usage.
+  let RATE_LIMIT : Nat = 1_000_000; // operations per reset interval
+  let GLOBAL_RATE_LIMIT : Nat = 10_000_000; // overall operations per reset interval
   let RESET_INTERVAL : Int = 60_000_000_000; // 1 minute in nanoseconds
 
   // Upgrade migration: convert legacy tuple-based seeds into the richer Seed record format.
@@ -814,14 +810,14 @@ persistent actor Self {
 
   // Backward-compatible estimator that accepts a record so argument ordering mismatches
   // in older generated bindings cannot trigger a decode trap. The frontend uses this
-  // endpoint to avoid the "unexpected IDL type when parsing Text" rejection seen in
-  // the legacy tuple signature.
-  public shared ({ caller }) func estimate_cost_v2(args : { operation : Text; count : Nat }) : async {
+  // Tuple signature to stay compatible with the deployed canister interface and avoid
+  // IDL "unexpected type" traps when the frontend passes (Text, Nat).
+  public shared ({ caller }) func estimate_cost_v2(operation : Text, count : Nat) : async {
     cycles : Nat;
     icp_e8s : Nat;
     fallback_used : Bool;
   } {
-    await estimateCostInternal(args.operation, args.count, caller);
+    await estimateCostInternal(operation, count, caller);
   };
 
   public query ({ caller }) func seed_count() : async Nat {

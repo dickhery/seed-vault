@@ -231,11 +231,11 @@ function App() {
 
     const payloadCount = BigInt(count);
 
-    // Prefer the record-based endpoint but gracefully fall back to the tuple
-    // signature if the deployed canister rejects due to IDL shape mismatches.
+    // Prefer the tuple-based endpoint used by the deployed canister and fall back
+    // to legacy calls if the interface differs.
     try {
       if (backendActor.estimate_cost_v2) {
-        const estimate = await backendActor.estimate_cost_v2({ operation, count: payloadCount });
+        const estimate = await backendActor.estimate_cost_v2(operation, payloadCount);
         console.log(`Estimate for ${operation} (${count}):`, estimate);
         return normalizeEstimate(estimate);
       }
