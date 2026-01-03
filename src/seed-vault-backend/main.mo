@@ -114,9 +114,9 @@ persistent actor Self {
   let MAX_IMAGE_BYTES : Nat = 1_048_576; // 1 MB limit for encrypted image payloads
   let MAX_SEED_NAME_CHARS : Nat = 100;
   let MAX_SEEDS_PER_USER : Nat = 50;
-  let ENCRYPT_CYCLE_COST : Nat = 0;
-  let DECRYPT_CYCLE_COST : Nat = 0;
-  let PRICING_REFRESH_INTERVAL_NS : Int = 300_000_000_000; // 5 minutes
+  let ENCRYPT_CYCLE_COST : Nat = 1_000_000_000; // ~1B cycles per encrypt
+  let DECRYPT_CYCLE_COST : Nat = 500_000_000; // ~0.5B cycles per decrypt
+  let PRICING_REFRESH_INTERVAL_NS : Int = 60_000_000_000; // 1 minute
   let FALLBACK_RETRY_INTERVAL_NS : Int = 60_000_000_000; // 1 minute between fallback retries
   // The XRC requires at least 1B cycles to be attached to each request. Send a
   // larger allowance so we avoid intermittent `NotEnoughCycles` rejections on
@@ -369,7 +369,7 @@ persistent actor Self {
     // Conservative fallback XDR/ICP (1 XDR per ICP) to overestimate cost when
     // live pricing fails, preventing under-billing that could leave the
     // canister without enough cycles to complete vetKD calls.
-    let fallback_rate : Nat = 1_000_000_000;
+    let fallback_rate : Nat = 1_300_000_000;
     var balance = ExperimentalCycles.balance();
     var fallbackUsed = false;
 
@@ -415,7 +415,7 @@ persistent actor Self {
 
     var attempts : Nat = 0;
     var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
-    label retries while (attempts < 5) {
+    label retries while (attempts < 10) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
         fallbackUsed := true;
@@ -434,7 +434,7 @@ persistent actor Self {
         };
         case (#Err(_)) {
           attempts += 1;
-          if (attempts >= 5) {
+          if (attempts >= 10) {
             rateResult := attempt;
             fallbackUsed := true;
           };
@@ -475,6 +475,10 @@ persistent actor Self {
         rateChoice
       };
     };
+    Debug.print(
+      "[XRC] Refresh at " # Int.toText(now) # " result=" # debug_show(rateResult) # " rate=" # Nat.toText(rateNat)
+      # " fallback=" # debug_show(fallbackUsed),
+    );
     { rate = if (rateNat == 0) { 1 } else { rateNat }; fallback_used = fallbackUsed };
   };
 
@@ -484,6 +488,9 @@ persistent actor Self {
     };
 
     let { rate; fallback_used } = await refreshXdrRate();
+    Debug.print(
+      "[cyclesToIcp] Cycles=" # Nat.toText(cycles) # " rate=" # Nat.toText(rate) # " fallback=" # debug_show(fallback_used),
+    );
     let numerator : Nat = cycles * 100_000;
     let baseCost = numerator / rate;
     // Add a ~5% buffer to account for execution and rounding without meaningfully
