@@ -197,8 +197,8 @@ persistent actor Self {
   stable var globalResetNs : Int = 0;
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
-  // Preserve legacy stable slot for exchange rate canister principal to maintain upgrade compatibility.
-  stable var XRC : Principal = Principal.fromText("uf6dk-hyaaa-aaaaq-qaaaq-cai");
+  // Preserve legacy stable slot for the exchange rate canister as an actor reference to maintain upgrade compatibility.
+  stable var XRC : XrcCanister = actor "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
 
   // Allow extremely high per-user and global throughput while retaining a short reset
   // window so legitimate bursts are never throttled during testing or heavy usage.
