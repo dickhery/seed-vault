@@ -49,7 +49,8 @@ persistent actor Self {
   // underscore keeps the Motoko identifier valid while Candid still serializes
   // the field name as `class` (the standard keyword-escape mapping in Motoko).
   type XrcAssetClass = variant { #Cryptocurrency; #FiatCurrency };
-  type XrcAsset = { symbol : Text; class_ : XrcAssetClass };
+  // Use backtick escape so the candid field name remains `class`.
+  type XrcAsset = { symbol : Text; `class` : XrcAssetClass };
   type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
 
   type XrcExchangeRateMetadata = {
@@ -405,8 +406,8 @@ persistent actor Self {
     };
 
     let request : XrcGetExchangeRateRequest = {
-      base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
-      quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
+      base_asset = { symbol = "ICP"; `class` = #Cryptocurrency };
+      quote_asset = { symbol = "XDR"; `class` = #FiatCurrency };
       timestamp = null;
     };
     // Conservative fallback XDR/ICP to overestimate cost when live pricing fails,
