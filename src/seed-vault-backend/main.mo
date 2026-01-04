@@ -14,7 +14,50 @@ import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
-import XRC "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
+// Exchange rate canister types (inlined to avoid build-time dependency on generated files).
+// Matches uf6dk-hyaaa-aaaaq-qaaaq-cai candid: https://github.com/dfinity/exchange-rate-canister
+type XrcAssetClass = { #Cryptocurrency; #FiatCurrency };
+type XrcAsset = { class_ : XrcAssetClass; symbol : Text };
+type XrcExchangeRateMetadata = {
+  decimals : Nat32;
+  forex_timestamp : ?Nat64;
+  quote_asset_num_received_rates : Nat64;
+  base_asset_num_received_rates : Nat64;
+  base_asset_num_queried_sources : Nat64;
+  standard_deviation : Nat64;
+  quote_asset_num_queried_sources : Nat64;
+};
+type XrcExchangeRate = {
+  metadata : XrcExchangeRateMetadata;
+  rate : Nat64;
+  timestamp : Nat64;
+  quote_asset : XrcAsset;
+  base_asset : XrcAsset;
+};
+type XrcExchangeRateError = {
+  #AnonymousPrincipalNotAllowed;
+  #CryptoQuoteAssetNotFound;
+  #FailedToAcceptCycles;
+  #ForexBaseAssetNotFound;
+  #CryptoBaseAssetNotFound;
+  #StablecoinRateTooFewRates;
+  #ForexAssetsNotFound;
+  #InconsistentRatesReceived;
+  #RateLimited;
+  #StablecoinRateZeroRate;
+  #Other : { code : Nat32; description : Text };
+  #ForexInvalidTimestamp;
+  #NotEnoughCycles;
+  #ForexQuoteAssetNotFound;
+  #StablecoinRateNotFound;
+  #Pending;
+};
+type XrcGetExchangeRateRequest = { timestamp : ?Nat64; quote_asset : XrcAsset; base_asset : XrcAsset };
+type XrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : XrcExchangeRateError };
+
+type XrcCanister = actor {
+  get_exchange_rate : shared XrcGetExchangeRateRequest -> async XrcGetExchangeRateResult;
+};
 
 persistent actor Self {
   // Type definitions for vetKD interactions
@@ -89,7 +132,7 @@ persistent actor Self {
   let IC : VetKdApi = actor "aaaaa-aa";
   // Ledger actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
   private func ledger() : Ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : Ledger;
-  let xrc : XRC.Self = actor "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
+  let xrc : XrcCanister = actor "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
   let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
@@ -353,7 +396,7 @@ persistent actor Self {
       };
     };
 
-    let request : XRC.GetExchangeRateRequest = {
+    let request : XrcGetExchangeRateRequest = {
       base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
       quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
       timestamp = null;
@@ -406,7 +449,7 @@ persistent actor Self {
     };
 
     var attempts : Nat = 0;
-    var rateResult : XRC.GetExchangeRateResult = #Err(#Other { code = Nat32.fromNat(0); description = "xrc not attempted" });
+    var rateResult : XrcGetExchangeRateResult = #Err(#Other { code = Nat32.fromNat(0); description = "xrc not attempted" });
     label retries while (attempts < 20) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
@@ -415,7 +458,7 @@ persistent actor Self {
       };
 
       ExperimentalCycles.add(to_add);
-      let attempt : XRC.GetExchangeRateResult = try {
+      let attempt : XrcGetExchangeRateResult = try {
         await xrc.get_exchange_rate(request)
       } catch (_) { #Err(#Other { code = Nat32.fromNat(0); description = "xrc unavailable" }) };
 
