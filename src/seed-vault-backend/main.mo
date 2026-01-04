@@ -178,6 +178,22 @@ persistent actor Self {
     image_iv : ?Blob;
   };
 
+  // Stable layout from the previous deployed version. We explicitly include the
+  // historical `XRC` stable variable so upgrades can drop it safely via
+  // `postupgrade`, satisfying Motoko's stable compatibility rules.
+  type OldStable = {
+    seedsByOwner : [(Principal, [(Text, Blob, Blob)])];
+    seedsByOwnerV2 : [(Principal, [Seed])];
+    last_xdr_per_icp_rate : Nat;
+    last_xdr_refresh_ns : Int;
+    last_pricing_fallback_used : Bool;
+    userOps : Trie.Trie<Principal, (Nat, Int)>;
+    globalOps : Nat;
+    globalResetNs : Int;
+    auditLogs : Trie.Trie<Principal, [(Int, Text)]>;
+    XRC : Principal;
+  };
+
   // Legacy storage (name, seed_cipher, seed_iv) preserved for upgrade compatibility.
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
   // Current storage mapping owner -> list of seeds (including optional images).
@@ -1571,5 +1587,28 @@ persistent actor Self {
 
   system func preupgrade() {
     ensureSeedsMigrated();
+  };
+
+  // Explicitly handle the legacy stable layout by restoring compatible fields
+  // and discarding the obsolete `XRC` entry that existed in the previous
+  // deployed version. This unblocks upgrades without losing current data.
+  system func postupgrade(oldData : ?OldStable) {
+    switch (oldData) {
+      case (?data) {
+        seedsByOwner := data.seedsByOwner;
+        seedsByOwnerV2 := data.seedsByOwnerV2;
+        last_xdr_per_icp_rate := data.last_xdr_per_icp_rate;
+        last_xdr_refresh_ns := data.last_xdr_refresh_ns;
+        last_pricing_fallback_used := data.last_pricing_fallback_used;
+        userOps := data.userOps;
+        globalOps := data.globalOps;
+        globalResetNs := data.globalResetNs;
+        auditLogs := data.auditLogs;
+        // `XRC` intentionally dropped
+      };
+      case (null) {
+        // Fresh install: nothing to migrate
+      };
+    }
   };
 };
