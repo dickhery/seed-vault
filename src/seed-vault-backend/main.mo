@@ -14,6 +14,7 @@ import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
+import XRC "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
 
 persistent actor Self {
   // Type definitions for vetKD interactions
@@ -43,59 +44,6 @@ persistent actor Self {
   type Ledger = actor {
     icrc1_balance_of : Account -> async Nat;
     icrc1_transfer : TransferArg -> async TransferResult;
-  };
-
-  // XRC exchange rate types. Motoko reserves `class` as a keyword; the trailing
-  // underscore keeps the Motoko identifier valid while Candid still serializes
-  // the field name as `class` (the standard keyword-escape mapping in Motoko).
-  type XrcAssetClass = variant { #Cryptocurrency; #FiatCurrency };
-  // Use backtick escape so the candid field name remains `class`.
-  type XrcAsset = { symbol : Text; `class` : XrcAssetClass };
-  type XrcGetExchangeRateRequest = { base_asset : XrcAsset; quote_asset : XrcAsset; timestamp : ?Nat64 };
-
-  type XrcExchangeRateMetadata = {
-    decimals : Nat32;
-    forex_timestamp : ?Nat64;
-    base_asset_num_received_rates : Nat64;
-    base_asset_num_queried_sources : Nat64;
-    quote_asset_num_received_rates : Nat64;
-    quote_asset_num_queried_sources : Nat64;
-    standard_deviation : Nat64;
-  };
-
-  type XrcOk = {
-    base_asset : XrcAsset;
-    quote_asset : XrcAsset;
-    timestamp : Nat64;
-    rate : Nat64;
-    metadata : XrcExchangeRateMetadata;
-  };
-
-  // Mirror the live XRC candid so decoding never traps when new tags appear.
-  type XrcErr = variant {
-    #AnonymousPrincipalNotAllowed;
-    #CryptoQuoteAssetNotFound;
-    #FailedToAcceptCycles;
-    #ForexBaseAssetNotFound;
-    #CryptoBaseAssetNotFound;
-    #StablecoinRateTooFewRates;
-    #ForexAssetsNotFound;
-    #InconsistentRatesReceived;
-    #RateLimited;
-    #StablecoinRateZeroRate;
-    #Other : { code : Nat32; description : Text };
-    #ForexInvalidTimestamp;
-    #NotEnoughCycles;
-    #ForexQuoteAssetNotFound;
-    #StablecoinRateNotFound;
-    #Pending;
-  };
-
-  type XrcGetExchangeRateResult = variant { #Ok : XrcOk; #Err : XrcErr };
-  type Xrc = actor {
-    // XRC is an update call that requires cycles; declaring it as such ensures cycles
-    // are attached and the request is accepted.
-    get_exchange_rate : shared (XrcGetExchangeRateRequest) -> async XrcGetExchangeRateResult;
   };
 
   // Call the management canister directly for vetKD.
@@ -141,7 +89,7 @@ persistent actor Self {
   let IC : VetKdApi = actor "aaaaa-aa";
   // Ledger actor reference recreated per call to avoid stable-type compatibility issues across upgrades.
   private func ledger() : Ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : Ledger;
-  let XRC : Xrc = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
+  let xrc : XRC.Self = actor "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
   let CYCLES_LEDGER : CyclesLedger = actor "um5iw-rqaaa-aaaaq-qaaba-cai";
 
   // Keep domain separator as a blob and convert to bytes when building the vetKD context.
@@ -405,9 +353,9 @@ persistent actor Self {
       };
     };
 
-    let request : XrcGetExchangeRateRequest = {
-      base_asset = { symbol = "ICP"; `class` = #Cryptocurrency };
-      quote_asset = { symbol = "XDR"; `class` = #FiatCurrency };
+    let request : XRC.GetExchangeRateRequest = {
+      base_asset = { symbol = "ICP"; class_ = #Cryptocurrency };
+      quote_asset = { symbol = "XDR"; class_ = #FiatCurrency };
       timestamp = null;
     };
     // Conservative fallback XDR/ICP to overestimate cost when live pricing fails,
@@ -458,7 +406,7 @@ persistent actor Self {
     };
 
     var attempts : Nat = 0;
-    var rateResult : XrcGetExchangeRateResult = #Err(#Other { code = Nat32.fromNat(0); description = "xrc not attempted" });
+    var rateResult : XRC.GetExchangeRateResult = #Err(#Other { code = Nat32.fromNat(0); description = "xrc not attempted" });
     label retries while (attempts < 20) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
@@ -467,8 +415,8 @@ persistent actor Self {
       };
 
       ExperimentalCycles.add(to_add);
-      let attempt : XrcGetExchangeRateResult = try {
-        await XRC.get_exchange_rate(request)
+      let attempt : XRC.GetExchangeRateResult = try {
+        await xrc.get_exchange_rate(request)
       } catch (_) { #Err(#Other { code = Nat32.fromNat(0); description = "xrc unavailable" }) };
 
       switch (attempt) {
