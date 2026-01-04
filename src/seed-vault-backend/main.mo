@@ -57,6 +57,16 @@ persistent actor Self {
   type XrcGetExchangeRateRequest = { timestamp : ?Nat64; quote_asset : XrcAsset; base_asset : XrcAsset };
   type XrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : XrcExchangeRateError };
 
+  // Legacy XRC types preserved solely for stable-layout compatibility. The previous
+  // deployment stored the exchange-rate canister reference with a simpler error
+  // payload (`#Err : Text`). We keep that shape for the stable slot while using the
+  // richer variant for live calls via the non-stable `xrc` binding below.
+  type OldXrcExchangeRateError = Text;
+  type OldXrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : OldXrcExchangeRateError };
+  type OldXrcCanister = actor {
+    get_exchange_rate : shared XrcGetExchangeRateRequest -> async OldXrcGetExchangeRateResult;
+  };
+
   type XrcCanister = actor {
     get_exchange_rate : shared XrcGetExchangeRateRequest -> async XrcGetExchangeRateResult;
   };
@@ -197,8 +207,8 @@ persistent actor Self {
   stable var globalResetNs : Int = 0;
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
-  // Preserve legacy stable slot for the exchange rate canister as an actor reference to maintain upgrade compatibility.
-  stable var XRC : XrcCanister = actor "ic:uf6dk-hyaaa-aaaaq-qaaaq-cai";
+  // Preserve legacy stable slot with the older error shape to maintain upgrade compatibility.
+  stable var XRC : OldXrcCanister = actor "uf6dk-hyaaa-aaaaq-qaaaq-cai";
 
   // Allow extremely high per-user and global throughput while retaining a short reset
   // window so legitimate bursts are never throttled during testing or heavy usage.
