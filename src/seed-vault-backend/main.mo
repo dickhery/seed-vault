@@ -14,52 +14,53 @@ import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
-// Exchange rate canister types (inlined to avoid build-time dependency on generated files).
-// Matches uf6dk-hyaaa-aaaaq-qaaaq-cai candid: https://github.com/dfinity/exchange-rate-canister
-type XrcAssetClass = { #Cryptocurrency; #FiatCurrency };
-type XrcAsset = { class_ : XrcAssetClass; symbol : Text };
-type XrcExchangeRateMetadata = {
-  decimals : Nat32;
-  forex_timestamp : ?Nat64;
-  quote_asset_num_received_rates : Nat64;
-  base_asset_num_received_rates : Nat64;
-  base_asset_num_queried_sources : Nat64;
-  standard_deviation : Nat64;
-  quote_asset_num_queried_sources : Nat64;
-};
-type XrcExchangeRate = {
-  metadata : XrcExchangeRateMetadata;
-  rate : Nat64;
-  timestamp : Nat64;
-  quote_asset : XrcAsset;
-  base_asset : XrcAsset;
-};
-type XrcExchangeRateError = {
-  #AnonymousPrincipalNotAllowed;
-  #CryptoQuoteAssetNotFound;
-  #FailedToAcceptCycles;
-  #ForexBaseAssetNotFound;
-  #CryptoBaseAssetNotFound;
-  #StablecoinRateTooFewRates;
-  #ForexAssetsNotFound;
-  #InconsistentRatesReceived;
-  #RateLimited;
-  #StablecoinRateZeroRate;
-  #Other : { code : Nat32; description : Text };
-  #ForexInvalidTimestamp;
-  #NotEnoughCycles;
-  #ForexQuoteAssetNotFound;
-  #StablecoinRateNotFound;
-  #Pending;
-};
-type XrcGetExchangeRateRequest = { timestamp : ?Nat64; quote_asset : XrcAsset; base_asset : XrcAsset };
-type XrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : XrcExchangeRateError };
-
-type XrcCanister = actor {
-  get_exchange_rate : shared XrcGetExchangeRateRequest -> async XrcGetExchangeRateResult;
-};
 
 persistent actor Self {
+  // Exchange rate canister types (inlined to avoid build-time dependency on generated files).
+  // Matches uf6dk-hyaaa-aaaaq-qaaaq-cai candid: https://github.com/dfinity/exchange-rate-canister
+  type XrcAssetClass = { #Cryptocurrency; #FiatCurrency };
+  type XrcAsset = { class_ : XrcAssetClass; symbol : Text };
+  type XrcExchangeRateMetadata = {
+    decimals : Nat32;
+    forex_timestamp : ?Nat64;
+    quote_asset_num_received_rates : Nat64;
+    base_asset_num_received_rates : Nat64;
+    base_asset_num_queried_sources : Nat64;
+    standard_deviation : Nat64;
+    quote_asset_num_queried_sources : Nat64;
+  };
+  type XrcExchangeRate = {
+    metadata : XrcExchangeRateMetadata;
+    rate : Nat64;
+    timestamp : Nat64;
+    quote_asset : XrcAsset;
+    base_asset : XrcAsset;
+  };
+  type XrcExchangeRateError = {
+    #AnonymousPrincipalNotAllowed;
+    #CryptoQuoteAssetNotFound;
+    #FailedToAcceptCycles;
+    #ForexBaseAssetNotFound;
+    #CryptoBaseAssetNotFound;
+    #StablecoinRateTooFewRates;
+    #ForexAssetsNotFound;
+    #InconsistentRatesReceived;
+    #RateLimited;
+    #StablecoinRateZeroRate;
+    #Other : { code : Nat32; description : Text };
+    #ForexInvalidTimestamp;
+    #NotEnoughCycles;
+    #ForexQuoteAssetNotFound;
+    #StablecoinRateNotFound;
+    #Pending;
+  };
+  type XrcGetExchangeRateRequest = { timestamp : ?Nat64; quote_asset : XrcAsset; base_asset : XrcAsset };
+  type XrcGetExchangeRateResult = { #Ok : XrcExchangeRate; #Err : XrcExchangeRateError };
+
+  type XrcCanister = actor {
+    get_exchange_rate : shared XrcGetExchangeRateRequest -> async XrcGetExchangeRateResult;
+  };
+
   // Type definitions for vetKD interactions
   type VetKdKeyId = { curve : { #bls12_381_g2 }; name : Text };
   type VetKdPublicKeyArgs = { canister_id : ?Principal; context : Blob; key_id : VetKdKeyId };
@@ -178,22 +179,6 @@ persistent actor Self {
     image_iv : ?Blob;
   };
 
-  // Stable layout from the previous deployed version. We explicitly include the
-  // historical `XRC` stable variable so upgrades can drop it safely via
-  // `postupgrade`, satisfying Motoko's stable compatibility rules.
-  type OldStable = {
-    seedsByOwner : [(Principal, [(Text, Blob, Blob)])];
-    seedsByOwnerV2 : [(Principal, [Seed])];
-    last_xdr_per_icp_rate : Nat;
-    last_xdr_refresh_ns : Int;
-    last_pricing_fallback_used : Bool;
-    userOps : Trie.Trie<Principal, (Nat, Int)>;
-    globalOps : Nat;
-    globalResetNs : Int;
-    auditLogs : Trie.Trie<Principal, [(Int, Text)]>;
-    XRC : Principal;
-  };
-
   // Legacy storage (name, seed_cipher, seed_iv) preserved for upgrade compatibility.
   stable var seedsByOwner : [(Principal, [(Text, Blob, Blob)])] = [];
   // Current storage mapping owner -> list of seeds (including optional images).
@@ -212,6 +197,8 @@ persistent actor Self {
   stable var globalResetNs : Int = 0;
   // Persist per-user audit events (timestamp, description) for a short access history.
   stable var auditLogs : Trie.Trie<Principal, [(Int, Text)]> = Trie.empty();
+  // Preserve legacy stable slot for exchange rate canister principal to maintain upgrade compatibility.
+  stable var XRC : Principal = Principal.fromText("uf6dk-hyaaa-aaaaq-qaaaq-cai");
 
   // Allow extremely high per-user and global throughput while retaining a short reset
   // window so legitimate bursts are never throttled during testing or heavy usage.
@@ -1588,27 +1575,5 @@ persistent actor Self {
   system func preupgrade() {
     ensureSeedsMigrated();
   };
-
-  // Explicitly handle the legacy stable layout by restoring compatible fields
-  // and discarding the obsolete `XRC` entry that existed in the previous
-  // deployed version. This unblocks upgrades without losing current data.
-  system func postupgrade(oldData : ?OldStable) {
-    switch (oldData) {
-      case (?data) {
-        seedsByOwner := data.seedsByOwner;
-        seedsByOwnerV2 := data.seedsByOwnerV2;
-        last_xdr_per_icp_rate := data.last_xdr_per_icp_rate;
-        last_xdr_refresh_ns := data.last_xdr_refresh_ns;
-        last_pricing_fallback_used := data.last_pricing_fallback_used;
-        userOps := data.userOps;
-        globalOps := data.globalOps;
-        globalResetNs := data.globalResetNs;
-        auditLogs := data.auditLogs;
-        // `XRC` intentionally dropped
-      };
-      case (null) {
-        // Fresh install: nothing to migrate
-      };
-    }
-  };
+  system func postupgrade() {};
 };
