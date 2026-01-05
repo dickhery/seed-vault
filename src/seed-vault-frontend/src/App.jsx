@@ -13,6 +13,12 @@ const MAX_SEED_NAME_CHARS = 100;
 const SEED_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9])?$/u;
 const SEED_TTL_MS = 5 * 60 * 1000;
 const SANITIZE_OPTS = { ALLOWED_TAGS: [], ALLOWED_ATTR: [] };
+const DERIVE_CYCLE_COST = 26_153_846_153;
+const ENCRYPT_CYCLE_COST = 0;
+const DECRYPT_CYCLE_COST = 0;
+const BUFFER_PERCENT = 105;
+const ICP_TO_CYCLES_BUFFER_E8S = LEDGER_FEE_E8S;
+const FALLBACK_RATE = 1_000_000_000;
 
 DOMPurify.setConfig(SANITIZE_OPTS);
 
@@ -58,6 +64,29 @@ function bytesToBase64(bytes) {
 
 function formatIcp(e8s) {
   return (Number(e8s) / 1e8).toFixed(6);
+}
+
+function costForOperationCycles(operation, count) {
+  if (operation === 'encrypt') return ENCRYPT_CYCLE_COST * count;
+  if (operation === 'decrypt') return DECRYPT_CYCLE_COST * count;
+  if (operation === 'derive') return DERIVE_CYCLE_COST * count;
+  return 0;
+}
+
+function estimateCostFromRate(operation, count, rate) {
+  const cycles = costForOperationCycles(operation, count);
+  if (cycles === 0) {
+    return { icp_e8s: 0, fallback_used: false };
+  }
+
+  const safeRate = rate || FALLBACK_RATE;
+  const numerator = cycles * 100_000;
+  const baseCost = numerator / safeRate;
+  const buffered = (baseCost * BUFFER_PERCENT) / 100;
+  return {
+    icp_e8s: Math.ceil(buffered) + ICP_TO_CYCLES_BUFFER_E8S,
+    fallback_used: safeRate === FALLBACK_RATE,
+  };
 }
 
 async function computeAccountId(canisterPrincipal, subaccountBytes) {
@@ -215,10 +244,25 @@ function App() {
       throw new Error('Backend is not initialized yet. Please re-authenticate.');
     }
     const payloadCount = BigInt(count);
-    if (backendActor.estimate_cost_v2) {
-      return backendActor.estimate_cost_v2({ operation, count: payloadCount });
+    try {
+      if (backendActor.estimate_cost_v2) {
+        return await backendActor.estimate_cost_v2({ operation, count: payloadCount });
+      }
+      return await backendActor.estimate_cost(operation, payloadCount);
+    } catch (error) {
+      console.error(`estimateCost(${operation}) failed`, error);
+      const pricingSnapshot = backendActor.pricing_status
+        ? await backendActor.pricing_status().catch(() => null)
+        : null;
+      const rateSnapshot = pricingSnapshot?.last_rate;
+      const rate = typeof rateSnapshot === 'bigint' ? Number(rateSnapshot) : Number(rateSnapshot || 0);
+      const derived = estimateCostFromRate(operation, count, rate || FALLBACK_RATE);
+      return {
+        cycles: BigInt(costForOperationCycles(operation, count)),
+        icp_e8s: BigInt(derived.icp_e8s),
+        fallback_used: true,
+      };
     }
-    return backendActor.estimate_cost(operation, payloadCount);
   }
 
   const decryptingAny = useMemo(
@@ -489,16 +533,6 @@ function App() {
       }
 
       try {
-      const [encryptEstimate, decryptEstimate, deriveEstimate] = await Promise.all([
-        estimateCost('encrypt', 1),
-        estimateCost('decrypt', 1),
-        estimateCost('derive', 1),
-      ]);
-        const fallback =
-          encryptEstimate.fallback_used || decryptEstimate.fallback_used || deriveEstimate.fallback_used;
-        const costE8s = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
-        setEstimatedCost(formatIcp(costE8s));
-
         let pricingSnapshot = null;
         try {
           pricingSnapshot = backendActor.pricing_status ? await backendActor.pricing_status() : null;
@@ -507,28 +541,44 @@ function App() {
           hadError = true;
         }
 
+        const rateRaw = pricingSnapshot?.last_rate;
+        let rate = typeof rateRaw === 'bigint' ? Number(rateRaw) : Number(rateRaw || 0);
+        if (!rate) {
+          rate = FALLBACK_RATE;
+        }
+
+        const encryptEstimate = estimateCostFromRate('encrypt', 1, rate);
+        const deriveEstimate = estimateCostFromRate('derive', 1, rate);
+        const fallback =
+          pricingSnapshot?.fallback_used || encryptEstimate.fallback_used || deriveEstimate.fallback_used;
+        const costE8s = Number(encryptEstimate.icp_e8s + deriveEstimate.icp_e8s) + LEDGER_FEE_E8S;
+        setEstimatedCost(formatIcp(costE8s));
+
         const refreshedAtNs = pricingSnapshot?.last_refresh_nanoseconds;
-        let refreshedAt;
+        let refreshedAt = Date.now();
         if (typeof refreshedAtNs === 'bigint') {
           refreshedAt = Number(refreshedAtNs / 1_000_000n);
         } else if (typeof refreshedAtNs === 'number') {
           refreshedAt = Math.floor(refreshedAtNs / 1_000_000);
         } else if (refreshedAtNs !== undefined && refreshedAtNs !== null) {
           refreshedAt = Number(refreshedAtNs) / 1_000_000;
-        } else {
-          refreshedAt = Date.now();
         }
         setEstimateTimestamp(refreshedAt);
-        const usedFallback = Boolean(fallback || pricingSnapshot?.fallback_used);
-        setUsingFallbackPricing(usedFallback);
-        if (usedFallback) {
+        setUsingFallbackPricing(Boolean(fallback));
+        if (fallback) {
           setStatus(
             'Using fallback pricing. Costs may shift once live rates are available—refresh before paying.',
           );
         }
       } catch (error) {
-      console.error('estimate_cost failed', error);
+        console.error('estimate_cost failed', error);
         hadError = true;
+        const fallbackEstimate = estimateCostFromRate('derive', 1, FALLBACK_RATE);
+        const costE8s = fallbackEstimate.icp_e8s + LEDGER_FEE_E8S;
+        setEstimatedCost(formatIcp(costE8s));
+        setEstimateTimestamp(Date.now());
+        setUsingFallbackPricing(true);
+        setStatus((prev) => prev || 'Pricing unavailable; using fallback estimate.');
       }
 
       if (hadError) {
