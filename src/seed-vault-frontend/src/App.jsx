@@ -566,9 +566,17 @@ function App() {
         setEstimateTimestamp(refreshedAt);
         setUsingFallbackPricing(Boolean(fallback));
         if (fallback) {
-          setStatus(
-            'Using fallback pricing. Costs may shift once live rates are available—refresh before paying.',
-          );
+          let fallbackReason = '';
+          try {
+            fallbackReason = await backendActor.get_last_xrc_error();
+          } catch (error) {
+            console.error('get_last_xrc_error failed', error);
+          }
+
+          const baseMessage =
+            'Using fallback pricing. Costs may shift once live rates are available—refresh before paying.';
+          const reasonSuffix = fallbackReason ? ` Reason: ${fallbackReason}` : '';
+          setStatus(`${baseMessage}${reasonSuffix}`);
         }
       } catch (error) {
         console.error('estimate_cost failed', error);

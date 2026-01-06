@@ -106,7 +106,7 @@ persistent actor Self {
   let CYCLES_PER_XDR : Nat = 1_000_000_000_000;
   let ICP_PER_XDR_FALLBACK : Nat = 50_000_000; // 0.5 ICP in e8s fallback
   let MAX_OPERATION_COST_E8S : Nat = 100_000_000; // Safety cap: 1 ICP
-  let MAX_RATE_DEVIATION_PERCENT : Nat = 10; // Reject fresh rates that drift too far from cached values
+  let MAX_RATE_DEVIATION_PERCENT : Nat = 20; // Reject fresh rates that drift too far from cached values
   // 420 UTF-8 characters can expand to ~1680 bytes in the worst case; AES-GCM adds
   // a 16-byte tag, so we reject ciphertexts above 2 KB to enforce the character limit
   // even if the frontend is bypassed.
@@ -122,7 +122,7 @@ persistent actor Self {
   // larger allowance so we avoid intermittent `NotEnoughCycles` rejections on
   // busier subnets and during cache misses, which otherwise force the UI to fall
   // back to stale pricing and show zero/near-zero costs.
-  let XRC_CALL_CYCLES : Nat = 50_000_000_000;
+  let XRC_CALL_CYCLES : Nat = 100_000_000_000;
   // Match the cycles attached in vetkd_derive_key so pricing reflects the
   // actual derivation cost instead of an inflated estimate.
   let DERIVE_CYCLE_COST : Nat = 26_153_846_153;
@@ -153,6 +153,8 @@ persistent actor Self {
   stable var last_xdr_refresh_ns : Int = 0;
   // Whether the most recent pricing refresh had to rely on the fallback rate instead of a live XRC response.
   stable var last_pricing_fallback_used : Bool = false;
+  // Capture the last XRC/pricing error so the frontend can surface actionable guidance.
+  stable var last_xrc_error : Text = "";
   // Track per-user operation counts for rate limiting.
   stable var userOps : Trie.Trie<Principal, (Nat, Int)> = Trie.empty();
   // Track aggregate operations across all callers to mitigate Sybil-style rate limit bypasses.
@@ -348,6 +350,8 @@ persistent actor Self {
 
   private func refreshXdrRate() : async { rate : Nat; fallback_used : Bool } {
     let now = Time.now();
+    // Reset the last recorded error before attempting a fresh lookup.
+    last_xrc_error := "";
 
     if (last_xdr_per_icp_rate != 0) {
       let sinceLast = now - last_xdr_refresh_ns;
@@ -415,17 +419,21 @@ persistent actor Self {
 
     var attempts : Nat = 0;
     var rateResult : XrcGetExchangeRateResult = #Err("xrc not attempted");
-    label retries while (attempts < 5) {
+    label retries while (attempts < 10) {
       let to_add = Nat.min(balance, XRC_CALL_CYCLES);
       if (to_add < MIN_XRC_CYCLES) {
         fallbackUsed := true;
+        last_xrc_error := "Not enough cycles attached to call XRC";
         break retries;
       };
 
       ExperimentalCycles.add(to_add);
       let attempt = try {
         await XRC.get_exchange_rate(request)
-      } catch (_) { #Err("xrc unavailable") };
+      } catch (e) {
+        last_xrc_error := Error.message(e);
+        #Err("xrc unavailable")
+      };
 
       switch (attempt) {
         case (#Ok(_)) {
@@ -434,9 +442,13 @@ persistent actor Self {
         };
         case (#Err(_)) {
           attempts += 1;
-          if (attempts >= 5) {
+          if (attempts >= 10) {
             rateResult := attempt;
             fallbackUsed := true;
+            switch (attempt) {
+              case (#Err(errTxt)) { last_xrc_error := errTxt };
+              case _ {};
+            };
           };
         };
       };
@@ -454,6 +466,7 @@ persistent actor Self {
           let upperBound = (last_xdr_per_icp_rate * (100 + MAX_RATE_DEVIATION_PERCENT)) / 100;
           if (r < lowerBound or r > upperBound) {
             fallbackUsed := true;
+            last_xrc_error := "Rate deviated too far from cached value";
             last_xdr_per_icp_rate
           } else {
             r
@@ -462,6 +475,9 @@ persistent actor Self {
         last_xdr_per_icp_rate := accepted;
         last_pricing_fallback_used := fallbackUsed;
         last_xdr_refresh_ns := now;
+        if (not fallbackUsed) {
+          last_xrc_error := "";
+        };
         accepted
       };
       case (#Err(_)) {
@@ -472,6 +488,9 @@ persistent actor Self {
         };
         last_pricing_fallback_used := true;
         last_xdr_refresh_ns := now;
+        if (Text.equal(last_xrc_error, "")) {
+          last_xrc_error := "XRC unavailable; using fallback pricing";
+        };
         rateChoice
       };
     };
@@ -1489,6 +1508,10 @@ persistent actor Self {
       last_refresh_nanoseconds = last_xdr_refresh_ns;
       fallback_used = last_pricing_fallback_used;
     }
+  };
+
+  public query func get_last_xrc_error() : async Text {
+    last_xrc_error
   };
 
   // Provide callers with a short rolling audit history of their own actions.
