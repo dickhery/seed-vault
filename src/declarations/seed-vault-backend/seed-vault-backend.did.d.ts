@@ -12,27 +12,22 @@ export type Result_2 = {
     'ok' : [Uint8Array | number[], Uint8Array | number[]]
   } |
   { 'err' : string };
-export type Result_4 = {
+export type Result_3 = {
     'ok' : [
-        Uint8Array | number[],
-        Uint8Array | number[],
-        [] | [Uint8Array | number[]],
-        [] | [Uint8Array | number[]],
-        Uint8Array | number[],
-      ]
+      Uint8Array | number[],
+      Uint8Array | number[],
+      [] | [Uint8Array | number[]],
+      [] | [Uint8Array | number[]],
+      Uint8Array | number[],
+    ]
   } |
   { 'err' : string };
-export type Result_3 = { 'ok' : null } |
+export type Result_4 = { 'ok' : null } |
   { 'err' : string };
-export type CostEstimate = {
-  'cycles' : bigint;
-  'fallback_used' : boolean;
-  'icp_e8s' : bigint;
-};
 export interface _SERVICE {
   'add_image' : ActorMethod<
     [string, Uint8Array | number[], Uint8Array | number[]],
-    Result_3
+    Result_4
   >,
   'add_seed' : ActorMethod<
     [
@@ -42,22 +37,22 @@ export interface _SERVICE {
       [] | [Uint8Array | number[]],
       [] | [Uint8Array | number[]],
     ],
-    Result_3
+    Result_4
   >,
   'canister_cycles' : ActorMethod<[], bigint>,
-  'convert_collected_icp' : ActorMethod<[], Result_3>,
-  'delete_seed' : ActorMethod<[string], Result_3>,
+  'convert_collected_icp' : ActorMethod<[], Result_4>,
+  'delete_seed' : ActorMethod<[string], Result_4>,
   'encrypted_symmetric_key_for_seed' : ActorMethod<
     [string, Uint8Array | number[]],
     Uint8Array | number[]
   >,
   'estimate_cost' : ActorMethod<
     [string, bigint],
-    CostEstimate
+    { 'icp_e8s' : bigint, 'fallback_used' : boolean, 'cycles' : bigint }
   >,
   'estimate_cost_v2' : ActorMethod<
     [{ 'count' : bigint, 'operation' : string }],
-    CostEstimate
+    { 'icp_e8s' : bigint, 'fallback_used' : boolean, 'cycles' : bigint }
   >,
   'get_account_details' : ActorMethod<
     [],
@@ -68,11 +63,11 @@ export interface _SERVICE {
       'canister' : string,
     }
   >,
+  'get_audit_log' : ActorMethod<[], Array<[bigint, string]>>,
   'get_ciphers_and_key' : ActorMethod<
     [string, Uint8Array | number[]],
-    Result_4
+    Result_3
   >,
-  'get_audit_log' : ActorMethod<[], Array<[bigint, string]>>,
   'get_image_cipher' : ActorMethod<[string], Result_2>,
   'get_image_cipher_and_key' : ActorMethod<
     [string, Uint8Array | number[]],

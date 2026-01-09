@@ -1468,7 +1468,7 @@ function App() {
                                   setHiddenSeeds((prev) => ({ ...prev, [seedName]: !prev[seedName] }))
                                 }
                               >
-                                {hiddenSeeds[seedName] ? 'Show' : 'Hide'}
+                                {hiddenSeeds[seedName] ? 'Reveal Seed' : 'Hide'}
                               </button>
                               <button
                                 type="button"
@@ -1515,7 +1515,7 @@ function App() {
                                   }));
                                 }}
                               >
-                                {showEncrypted[seedName] ? 'Show decrypted' : 'Show encrypted'}
+                                {showEncrypted[seedName] ? 'Hide encrypted' : 'Show encrypted'}
                               </button>
                               <button
                                 type="button"

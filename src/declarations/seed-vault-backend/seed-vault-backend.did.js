@@ -1,6 +1,6 @@
 export const idlFactory = ({ IDL }) => {
-  const Result_3 = IDL.Variant({ 'ok' : IDL.Null, 'err' : IDL.Text });
-  const Result_4 = IDL.Variant({
+  const Result_4 = IDL.Variant({ 'ok' : IDL.Null, 'err' : IDL.Text });
+  const Result_3 = IDL.Variant({
     'ok' : IDL.Tuple(
       IDL.Vec(IDL.Nat8),
       IDL.Vec(IDL.Nat8),
@@ -18,16 +18,11 @@ export const idlFactory = ({ IDL }) => {
     'ok' : IDL.Tuple(IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)),
     'err' : IDL.Text,
   });
-  const CostEstimate = IDL.Record({
-    'cycles' : IDL.Nat,
-    'fallback_used' : IDL.Bool,
-    'icp_e8s' : IDL.Nat,
-  });
   const Result = IDL.Variant({ 'ok' : IDL.Nat, 'err' : IDL.Text });
   return IDL.Service({
     'add_image' : IDL.Func(
         [IDL.Text, IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_3],
+        [Result_4],
         [],
       ),
     'add_seed' : IDL.Func(
@@ -38,12 +33,12 @@ export const idlFactory = ({ IDL }) => {
           IDL.Opt(IDL.Vec(IDL.Nat8)),
           IDL.Opt(IDL.Vec(IDL.Nat8)),
         ],
-        [Result_3],
+        [Result_4],
         [],
       ),
     'canister_cycles' : IDL.Func([], [IDL.Nat], ['query']),
-    'convert_collected_icp' : IDL.Func([], [Result_3], []),
-    'delete_seed' : IDL.Func([IDL.Text], [Result_3], []),
+    'convert_collected_icp' : IDL.Func([], [Result_4], []),
+    'delete_seed' : IDL.Func([IDL.Text], [Result_4], []),
     'encrypted_symmetric_key_for_seed' : IDL.Func(
         [IDL.Text, IDL.Vec(IDL.Nat8)],
         [IDL.Vec(IDL.Nat8)],
@@ -51,12 +46,24 @@ export const idlFactory = ({ IDL }) => {
       ),
     'estimate_cost' : IDL.Func(
         [IDL.Text, IDL.Nat],
-        [CostEstimate],
+        [
+          IDL.Record({
+            'icp_e8s' : IDL.Nat,
+            'fallback_used' : IDL.Bool,
+            'cycles' : IDL.Nat,
+          }),
+        ],
         [],
       ),
     'estimate_cost_v2' : IDL.Func(
         [IDL.Record({ 'count' : IDL.Nat, 'operation' : IDL.Text })],
-        [CostEstimate],
+        [
+          IDL.Record({
+            'icp_e8s' : IDL.Nat,
+            'fallback_used' : IDL.Bool,
+            'cycles' : IDL.Nat,
+          }),
+        ],
         [],
       ),
     'get_account_details' : IDL.Func(
@@ -71,15 +78,15 @@ export const idlFactory = ({ IDL }) => {
         ],
         [],
       ),
-    'get_ciphers_and_key' : IDL.Func(
-        [IDL.Text, IDL.Vec(IDL.Nat8)],
-        [Result_4],
-        [],
-      ),
     'get_audit_log' : IDL.Func(
         [],
         [IDL.Vec(IDL.Tuple(IDL.Int, IDL.Text))],
         ['query'],
+      ),
+    'get_ciphers_and_key' : IDL.Func(
+        [IDL.Text, IDL.Vec(IDL.Nat8)],
+        [Result_3],
+        [],
       ),
     'get_image_cipher' : IDL.Func([IDL.Text], [Result_2], []),
     'get_image_cipher_and_key' : IDL.Func(

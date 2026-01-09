@@ -1,7 +1,18 @@
-type Result_3 = 
+type Result_4 = 
  variant {
    err: text;
    ok;
+ };
+type Result_3 = 
+ variant {
+   err: text;
+   ok: record {
+         blob;
+         blob;
+         opt blob;
+         opt blob;
+         blob;
+       };
  };
 type Result_2 = 
  variant {
@@ -11,7 +22,7 @@ type Result_2 =
          blob;
        };
  };
-type Result_1 =
+type Result_1 = 
  variant {
    err: text;
    ok: record {
@@ -20,30 +31,18 @@ type Result_1 =
          blob;
        };
  };
-type Result_4 =
- variant {
-   err: text;
-   ok: record {
-         blob;
-         blob;
-         opt blob;
-         opt blob;
-         blob;
-       };
- };
-type Result =
+type Result = 
  variant {
    err: text;
    ok: nat;
  };
 service : {
-  get_ciphers_and_key: (name: text, transport_public_key: blob) -> (Result_4);
-  add_image: (name: text, image_cipher: blob, image_iv: blob) -> (Result_3);
+  add_image: (name: text, image_cipher: blob, image_iv: blob) -> (Result_4);
   add_seed: (name: text, cipher: blob, iv: blob, image_cipher: opt blob,
-   image_iv: opt blob) -> (Result_3);
+   image_iv: opt blob) -> (Result_4);
   canister_cycles: () -> (nat) query;
-  convert_collected_icp: () -> (Result_3);
-  delete_seed: (name: text) -> (Result_3);
+  convert_collected_icp: () -> (Result_4);
+  delete_seed: (name: text) -> (Result_4);
   encrypted_symmetric_key_for_seed: (name: text, transport_public_key:
    blob) -> (blob);
   estimate_cost: (operation: text, count: nat) ->
@@ -52,7 +51,10 @@ service : {
       fallback_used: bool;
       icp_e8s: nat;
     });
-  estimate_cost_v2: (record { count: nat; operation: text }) ->
+  estimate_cost_v2: (args: record {
+                             count: nat;
+                             operation: text;
+                           }) ->
    (record {
       cycles: nat;
       fallback_used: bool;
@@ -69,6 +71,7 @@ service : {
                               int;
                               text;
                             }) query;
+  get_ciphers_and_key: (name: text, transport_public_key: blob) -> (Result_3);
   get_image_cipher: (name: text) -> (Result_2);
   get_image_cipher_and_key: (name: text, transport_public_key: blob) ->
    (Result_1);
